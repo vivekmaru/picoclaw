@@ -211,6 +211,53 @@ Use `bindings` in `config.json` to route incoming messages to different agents b
 | `match.account_id` | No | Channel account filter. Use `"*"` for all accounts of that channel. If omitted, only default account is matched |
 | `match.peer.kind` + `match.peer.id` | No | Exact peer match (e.g. direct chat / topic / group id) |
 | `match.guild_id` | No | Guild/server-level match |
+
+### Teammate Profiles
+
+Phase 2 introduces teammate profiles as a layer above raw agents. A teammate can
+point at an agent, carry a role, define a memory scope, and become a target for
+delegation via `teammate_id`.
+
+```json
+{
+  "agents": {
+    "defaults": {
+      "workspace": "~/.picoclaw/workspace",
+      "model_name": "planner-model"
+    },
+    "list": [
+      {
+        "id": "planner",
+        "default": true,
+        "subagents": { "allow_agents": ["coder"] }
+      },
+      { "id": "coder", "workspace": "~/.picoclaw/workspace-coder" }
+    ]
+  },
+  "teammates": {
+    "defaults": {
+      "approval_policy": "confirm_write"
+    },
+    "list": [
+      {
+        "id": "reviewer",
+        "name": "Code Reviewer",
+        "role": "reviewer",
+        "agent_id": "coder",
+        "memory_scope": "team/reviewer",
+        "workspace_scope": ["~/.picoclaw/workspace-coder"]
+      }
+    ]
+  }
+}
+```
+
+- `teammates.list[].agent_id` maps the profile onto an existing agent.
+- `role` is descriptive metadata for routing, UI, and future policy decisions.
+- `memory_scope` gives delegated tasks a stable namespace to reference.
+- when no teammate profile is configured for an agent, PicoClaw creates an implicit teammate profile for that agent automatically.
+- the `spawn` tool now accepts `teammate_id` in addition to `agent_id`.
+- `spawn_status` keeps the human-readable report and now also appends a structured task payload for machine inspection.
 | `match.team_id` | No | Team/workspace-level match |
 
 #### Matching priority

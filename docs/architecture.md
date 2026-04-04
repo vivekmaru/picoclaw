@@ -54,6 +54,14 @@ Secrets and credentials are split across:
 - `.security.yml`
 - `auth.json` + `auth.key`
 
+Agent coordination is split across two layers:
+
+- `agents`
+  runtime execution units with workspaces, tools, models, and routing
+- `teammates`
+  human-facing profiles that map onto agents and carry role, memory-scope, and
+  approval metadata for delegation
+
 ### Channels
 
 Channels are ingress and egress adapters for chat systems, sockets, and device

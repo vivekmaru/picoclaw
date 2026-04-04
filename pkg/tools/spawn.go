@@ -7,11 +7,14 @@ import (
 )
 
 type SpawnTool struct {
-	spawner        SubTurnSpawner
-	defaultModel   string
-	maxTokens      int
-	temperature    float64
-	allowlistCheck func(targetAgentID string) bool
+	manager             *SubagentManager
+	spawner             SubTurnSpawner
+	defaultModel        string
+	maxTokens           int
+	temperature         float64
+	requesterAgentID    string
+	requesterTeammateID string
+	allowlistCheck      func(targetAgentID, targetTeammateID string) bool
 }
 
 // Compile-time check: SpawnTool implements AsyncExecutor.
@@ -22,6 +25,7 @@ func NewSpawnTool(manager *SubagentManager) *SpawnTool {
 		return &SpawnTool{}
 	}
 	return &SpawnTool{
+		manager:      manager,
 		defaultModel: manager.defaultModel,
 		maxTokens:    manager.maxTokens,
 		temperature:  manager.temperature,
@@ -57,13 +61,22 @@ func (t *SpawnTool) Parameters() map[string]any {
 				"type":        "string",
 				"description": "Optional target agent ID to delegate the task to",
 			},
+			"teammate_id": map[string]any{
+				"type":        "string",
+				"description": "Optional target teammate profile ID to delegate the task to",
+			},
 		},
 		"required": []string{"task"},
 	}
 }
 
-func (t *SpawnTool) SetAllowlistChecker(check func(targetAgentID string) bool) {
+func (t *SpawnTool) SetAllowlistChecker(check func(targetAgentID, targetTeammateID string) bool) {
 	t.allowlistCheck = check
+}
+
+func (t *SpawnTool) SetRequesterIdentity(agentID, teammateID string) {
+	t.requesterAgentID = agentID
+	t.requesterTeammateID = teammateID
 }
 
 func (t *SpawnTool) Execute(ctx context.Context, args map[string]any) *ToolResult {
@@ -92,11 +105,42 @@ func (t *SpawnTool) execute(
 
 	label, _ := args["label"].(string)
 	agentID, _ := args["agent_id"].(string)
+	teammateID, _ := args["teammate_id"].(string)
 
-	// Check allowlist if targeting a specific agent
-	if agentID != "" && t.allowlistCheck != nil {
-		if !t.allowlistCheck(agentID) {
+	// Check allowlist if targeting a specific agent or teammate.
+	if (agentID != "" || teammateID != "") && t.allowlistCheck != nil {
+		if !t.allowlistCheck(agentID, teammateID) {
+			if teammateID != "" {
+				return ErrorResult(fmt.Sprintf("not allowed to delegate to teammate '%s'", teammateID))
+			}
 			return ErrorResult(fmt.Sprintf("not allowed to spawn agent '%s'", agentID))
+		}
+	}
+
+	if t.manager != nil && t.manager.SupportsTrackedSpawn() {
+		taskRecord, err := t.manager.Spawn(ctx, SpawnRequest{
+			Task:                task,
+			Label:               label,
+			AgentID:             agentID,
+			TeammateID:          teammateID,
+			RequesterAgentID:    t.requesterAgentID,
+			RequesterTeammateID: t.requesterTeammateID,
+			OriginChannel:       ToolChannel(ctx),
+			OriginChatID:        ToolChatID(ctx),
+		}, cb)
+		if err != nil {
+			return ErrorResult(fmt.Sprintf("failed to spawn task: %v", err)).WithError(err)
+		}
+		userMessage := fmt.Sprintf("Spawned task %s", taskRecord.ID)
+		if label != "" {
+			userMessage = fmt.Sprintf("Spawned task %s (%s)", taskRecord.ID, label)
+		}
+		return &ToolResult{
+			ForLLM:  t.manager.MarshalTask(taskRecord),
+			ForUser: userMessage,
+			Silent:  false,
+			IsError: false,
+			Async:   true,
 		}
 	}
 

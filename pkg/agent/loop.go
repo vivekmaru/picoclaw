@@ -406,7 +406,7 @@ func registerSharedTools(
 			// Set the spawner that links into AgentLoop's turnState
 			subagentManager.SetSpawner(func(
 				ctx context.Context,
-				task, label, targetAgentID string,
+				task, label, targetAgentID, teammateID string,
 				tls *tools.ToolRegistry,
 				maxTokens int,
 				temperature float64,
@@ -443,9 +443,22 @@ func registerSharedTools(
 
 				// 4. Resolve Model
 				modelToUse := agent.Model
-				if targetAgentID != "" {
-					if targetAgent, ok := al.GetRegistry().GetAgent(targetAgentID); ok {
-						modelToUse = targetAgent.Model
+				targetAgentResolved := targetAgentID
+				modelPinnedByTeammate := false
+				if teammateID != "" {
+					if teammate, ok := al.GetRegistry().GetTeammate(teammateID); ok {
+						targetAgentResolved = teammate.AgentID
+						if teammate.Model != "" {
+							modelToUse = teammate.Model
+							modelPinnedByTeammate = true
+						}
+					}
+				}
+				if targetAgentResolved != "" {
+					if targetAgent, ok := al.GetRegistry().GetAgent(targetAgentResolved); ok {
+						if !modelPinnedByTeammate {
+							modelToUse = targetAgent.Model
+						}
 					}
 				}
 
@@ -462,6 +475,13 @@ func registerSharedTools(
 				// 6. Spawn SubTurn
 				return spawnSubTurn(ctx, al, parentTS, cfg)
 			})
+			subagentManager.SetTeammateResolver(func(teammateID string) (tools.TaskTeammate, bool) {
+				profile, ok := registry.GetTeammate(teammateID)
+				if !ok {
+					return tools.TaskTeammate{}, false
+				}
+				return profile.toTaskTeammate(), true
+			})
 
 			// Clone the parent's tool registry so subagents can use all
 			// tools registered so far (file, web, etc.) but NOT spawn/
@@ -472,7 +492,15 @@ func registerSharedTools(
 				spawnTool := tools.NewSpawnTool(subagentManager)
 				spawnTool.SetSpawner(NewSubTurnSpawner(al))
 				currentAgentID := agentID
-				spawnTool.SetAllowlistChecker(func(targetAgentID string) bool {
+				if teammate, ok := registry.DefaultTeammateForAgent(currentAgentID); ok {
+					spawnTool.SetRequesterIdentity(currentAgentID, teammate.ID)
+				} else {
+					spawnTool.SetRequesterIdentity(currentAgentID, "")
+				}
+				spawnTool.SetAllowlistChecker(func(targetAgentID, teammateID string) bool {
+					if teammateID != "" {
+						return registry.CanDelegateToTeammate(currentAgentID, teammateID)
+					}
 					return registry.CanSpawnSubagent(currentAgentID, targetAgentID)
 				})
 

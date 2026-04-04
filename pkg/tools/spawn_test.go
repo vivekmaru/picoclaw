@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -79,6 +80,59 @@ func TestSpawnTool_Execute_ValidTask(t *testing.T) {
 	}
 	if !result.Async {
 		t.Error("SpawnTool should return async result")
+	}
+}
+
+func TestSpawnTool_Execute_TrackedTaskRecord(t *testing.T) {
+	provider := &MockLLMProvider{}
+	manager := NewSubagentManager(provider, "test-model", "/tmp/test")
+	manager.SetSpawner(func(
+		ctx context.Context,
+		task, label, agentID, teammateID string,
+		tls *ToolRegistry,
+		maxTokens int,
+		temperature float64,
+		hasMaxTokens, hasTemperature bool,
+	) (*ToolResult, error) {
+		return &ToolResult{ForLLM: "done"}, nil
+	})
+	manager.SetTeammateResolver(func(teammateID string) (TaskTeammate, bool) {
+		if teammateID != "reviewer" {
+			return TaskTeammate{}, false
+		}
+		return TaskTeammate{
+			ID:          "reviewer",
+			AgentID:     "coder",
+			MemoryScope: "team/reviewer",
+		}, true
+	})
+	tool := NewSpawnTool(manager)
+	tool.SetRequesterIdentity("planner", "planner")
+
+	result := tool.Execute(WithToolContext(context.Background(), "internal", "chat-1"), map[string]any{
+		"task":        "Review the patch",
+		"label":       "review",
+		"teammate_id": "reviewer",
+	})
+	if result == nil || result.IsError {
+		t.Fatalf("expected tracked spawn success, got %+v", result)
+	}
+	if !result.Async {
+		t.Fatal("expected async tracked spawn result")
+	}
+
+	var task SubagentTask
+	if err := json.Unmarshal([]byte(result.ForLLM), &task); err != nil {
+		t.Fatalf("expected structured task payload, got %q error=%v", result.ForLLM, err)
+	}
+	if task.TeammateID != "reviewer" {
+		t.Fatalf("TeammateID = %q, want reviewer", task.TeammateID)
+	}
+	if task.RequesterTeammateID != "planner" {
+		t.Fatalf("RequesterTeammateID = %q, want planner", task.RequesterTeammateID)
+	}
+	if task.MemoryScope != "team/reviewer" {
+		t.Fatalf("MemoryScope = %q, want team/reviewer", task.MemoryScope)
 	}
 }
 

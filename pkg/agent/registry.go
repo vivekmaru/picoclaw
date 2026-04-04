@@ -12,9 +12,10 @@ import (
 
 // AgentRegistry manages multiple agent instances and routes messages to them.
 type AgentRegistry struct {
-	agents   map[string]*AgentInstance
-	resolver *routing.RouteResolver
-	mu       sync.RWMutex
+	agents    map[string]*AgentInstance
+	teammates map[string]TeammateProfile
+	resolver  *routing.RouteResolver
+	mu        sync.RWMutex
 }
 
 // NewAgentRegistry creates a registry from config, instantiating all agents.
@@ -23,8 +24,9 @@ func NewAgentRegistry(
 	provider providers.LLMProvider,
 ) *AgentRegistry {
 	registry := &AgentRegistry{
-		agents:   make(map[string]*AgentInstance),
-		resolver: routing.NewRouteResolver(cfg),
+		agents:    make(map[string]*AgentInstance),
+		teammates: make(map[string]TeammateProfile),
+		resolver:  routing.NewRouteResolver(cfg),
 	}
 
 	agentConfigs := cfg.Agents.List
@@ -51,6 +53,8 @@ func NewAgentRegistry(
 				})
 		}
 	}
+
+	registry.teammates = buildTeammateProfiles(cfg, registry.agents)
 
 	return registry
 }
@@ -80,6 +84,39 @@ func (r *AgentRegistry) ListAgentIDs() []string {
 	return ids
 }
 
+func (r *AgentRegistry) GetTeammate(teammateID string) (TeammateProfile, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	id := routing.NormalizeAgentID(teammateID)
+	profile, ok := r.teammates[id]
+	return profile, ok
+}
+
+func (r *AgentRegistry) ListTeammateIDs() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	ids := make([]string, 0, len(r.teammates))
+	for id := range r.teammates {
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+func (r *AgentRegistry) DefaultTeammateForAgent(agentID string) (TeammateProfile, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	normAgentID := routing.NormalizeAgentID(agentID)
+	if profile, ok := r.teammates[normAgentID]; ok {
+		return profile, true
+	}
+	for _, profile := range r.teammates {
+		if routing.NormalizeAgentID(profile.AgentID) == normAgentID {
+			return profile, true
+		}
+	}
+	return TeammateProfile{}, false
+}
+
 // CanSpawnSubagent checks if parentAgentID is allowed to spawn targetAgentID.
 func (r *AgentRegistry) CanSpawnSubagent(parentAgentID, targetAgentID string) bool {
 	parent, ok := r.GetAgent(parentAgentID)
@@ -99,6 +136,14 @@ func (r *AgentRegistry) CanSpawnSubagent(parentAgentID, targetAgentID string) bo
 		}
 	}
 	return false
+}
+
+func (r *AgentRegistry) CanDelegateToTeammate(parentAgentID, teammateID string) bool {
+	profile, ok := r.GetTeammate(teammateID)
+	if !ok {
+		return false
+	}
+	return r.CanSpawnSubagent(parentAgentID, profile.AgentID)
 }
 
 // ForEachTool calls fn for every tool registered under the given name

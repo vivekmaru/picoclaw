@@ -2,7 +2,9 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -32,26 +34,59 @@ type SubTurnConfig struct {
 	InitialTokenBudget *atomic.Int64 // Shared token budget for team members; nil if no budget
 }
 
+type TaskTeammate struct {
+	ID             string   `json:"id"`
+	Name           string   `json:"name,omitempty"`
+	Role           string   `json:"role,omitempty"`
+	AgentID        string   `json:"agent_id,omitempty"`
+	Model          string   `json:"model,omitempty"`
+	MemoryScope    string   `json:"memory_scope,omitempty"`
+	ApprovalPolicy string   `json:"approval_policy,omitempty"`
+	WorkspaceScope []string `json:"workspace_scope,omitempty"`
+	Toolset        []string `json:"toolset,omitempty"`
+}
+
+type SpawnRequest struct {
+	Task                string
+	Label               string
+	AgentID             string
+	TeammateID          string
+	RequesterAgentID    string
+	RequesterTeammateID string
+	OriginChannel       string
+	OriginChatID        string
+}
+
 type SubagentTask struct {
-	ID            string
-	Task          string
-	Label         string
-	AgentID       string
-	OriginChannel string
-	OriginChatID  string
-	Status        string
-	Result        string
-	Created       int64
+	ID                  string   `json:"id"`
+	Kind                string   `json:"kind"`
+	Task                string   `json:"task"`
+	Label               string   `json:"label,omitempty"`
+	AgentID             string   `json:"agent_id,omitempty"`
+	TeammateID          string   `json:"teammate_id,omitempty"`
+	RequesterAgentID    string   `json:"requester_agent_id,omitempty"`
+	RequesterTeammateID string   `json:"requester_teammate_id,omitempty"`
+	OriginChannel       string   `json:"origin_channel,omitempty"`
+	OriginChatID        string   `json:"origin_chat_id,omitempty"`
+	Status              string   `json:"status"`
+	Result              string   `json:"result,omitempty"`
+	MemoryScope         string   `json:"memory_scope,omitempty"`
+	WorkspaceScope      []string `json:"workspace_scope,omitempty"`
+	Created             int64    `json:"created"`
+	Started             int64    `json:"started,omitempty"`
+	Completed           int64    `json:"completed,omitempty"`
 }
 
 type SpawnSubTurnFunc func(
 	ctx context.Context,
-	task, label, agentID string,
+	task, label, agentID, teammateID string,
 	tools *ToolRegistry,
 	maxTokens int,
 	temperature float64,
 	hasMaxTokens, hasTemperature bool,
 ) (*ToolResult, error)
+
+type TeammateResolver func(teammateID string) (TaskTeammate, bool)
 
 type SubagentManager struct {
 	tasks          map[string]*SubagentTask
@@ -67,6 +102,7 @@ type SubagentManager struct {
 	hasTemperature bool
 	nextID         int
 	spawner        SpawnSubTurnFunc
+	teammates      TeammateResolver
 
 	// mediaResolver resolves media:// refs in tool-loop messages before
 	// each LLM call in the legacy RunToolLoop fallback path.
@@ -94,6 +130,12 @@ func (sm *SubagentManager) SetSpawner(spawner SpawnSubTurnFunc) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	sm.spawner = spawner
+}
+
+func (sm *SubagentManager) SetTeammateResolver(resolver TeammateResolver) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	sm.teammates = resolver
 }
 
 // SetMediaResolver injects a message preprocessor that resolves media:// refs
@@ -132,36 +174,48 @@ func (sm *SubagentManager) RegisterTool(tool Tool) {
 	sm.tools.Register(tool)
 }
 
-func (sm *SubagentManager) Spawn(
-	ctx context.Context,
-	task, label, agentID, originChannel, originChatID string,
-	callback AsyncCallback,
-) (string, error) {
+func (sm *SubagentManager) Spawn(ctx context.Context, req SpawnRequest, callback AsyncCallback) (SubagentTask, error) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
 	taskID := fmt.Sprintf("subagent-%d", sm.nextID)
 	sm.nextID++
 
+	resolvedAgentID := req.AgentID
+	var teammate TaskTeammate
+	if strings.TrimSpace(req.TeammateID) != "" && sm.teammates != nil {
+		var ok bool
+		teammate, ok = sm.teammates(req.TeammateID)
+		if !ok {
+			return SubagentTask{}, fmt.Errorf("unknown teammate %q", req.TeammateID)
+		}
+		if resolvedAgentID == "" {
+			resolvedAgentID = teammate.AgentID
+		}
+	}
+
 	subagentTask := &SubagentTask{
-		ID:            taskID,
-		Task:          task,
-		Label:         label,
-		AgentID:       agentID,
-		OriginChannel: originChannel,
-		OriginChatID:  originChatID,
-		Status:        "running",
-		Created:       time.Now().UnixMilli(),
+		ID:                  taskID,
+		Kind:                "delegation",
+		Task:                req.Task,
+		Label:               req.Label,
+		AgentID:             resolvedAgentID,
+		TeammateID:          req.TeammateID,
+		RequesterAgentID:    req.RequesterAgentID,
+		RequesterTeammateID: req.RequesterTeammateID,
+		OriginChannel:       req.OriginChannel,
+		OriginChatID:        req.OriginChatID,
+		Status:              "queued",
+		MemoryScope:         teammate.MemoryScope,
+		WorkspaceScope:      append([]string(nil), teammate.WorkspaceScope...),
+		Created:             time.Now().UnixMilli(),
 	}
 	sm.tasks[taskID] = subagentTask
 
 	// Start task in background with context cancellation support
 	go sm.runTask(ctx, subagentTask, callback)
 
-	if label != "" {
-		return fmt.Sprintf("Spawned subagent '%s' for task: %s", label, task), nil
-	}
-	return fmt.Sprintf("Spawned subagent for task: %s", task), nil
+	return *subagentTask, nil
 }
 
 func (sm *SubagentManager) runTask(
@@ -170,7 +224,7 @@ func (sm *SubagentManager) runTask(
 	callback AsyncCallback,
 ) {
 	task.Status = "running"
-	task.Created = time.Now().UnixMilli()
+	task.Started = time.Now().UnixMilli()
 	// TODO(eventbus): once subagents are modeled as child turns inside
 	// pkg/agent, emit SubTurnEnd and SubTurnResultDelivered from the parent
 	// AgentLoop instead of this legacy manager.
@@ -206,6 +260,7 @@ func (sm *SubagentManager) runTask(
 			task.Task,
 			task.Label,
 			task.AgentID,
+			task.TeammateID,
 			tools,
 			maxTokens,
 			temperature,
@@ -272,10 +327,12 @@ After completing the task, provide a clear summary of what was done.`
 	if err != nil {
 		task.Status = "failed"
 		task.Result = fmt.Sprintf("Error: %v", err)
+		task.Completed = time.Now().UnixMilli()
 		// Check if it was canceled
 		if ctx.Err() != nil {
 			task.Status = "canceled"
 			task.Result = "Task canceled during execution"
+			task.Completed = time.Now().UnixMilli()
 		}
 		result = &ToolResult{
 			ForLLM:  task.Result,
@@ -288,7 +345,25 @@ After completing the task, provide a clear summary of what was done.`
 	} else {
 		task.Status = "completed"
 		task.Result = result.ForLLM
+		task.Completed = time.Now().UnixMilli()
 	}
+}
+
+func (sm *SubagentManager) SupportsTrackedSpawn() bool {
+	if sm == nil {
+		return false
+	}
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	return sm.spawner != nil
+}
+
+func (sm *SubagentManager) MarshalTask(task SubagentTask) string {
+	data, err := json.Marshal(task)
+	if err != nil {
+		return fmt.Sprintf(`{"id":%q,"status":%q}`, task.ID, task.Status)
+	}
+	return string(data)
 }
 
 func (sm *SubagentManager) GetTask(taskID string) (*SubagentTask, bool) {
