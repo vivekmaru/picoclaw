@@ -20,6 +20,7 @@ import (
 
 	"github.com/sipeed/picoclaw/pkg/audio/asr"
 	"github.com/sipeed/picoclaw/pkg/audio/tts"
+	"github.com/sipeed/picoclaw/pkg/audit"
 	"github.com/sipeed/picoclaw/pkg/bus"
 	"github.com/sipeed/picoclaw/pkg/channels"
 	"github.com/sipeed/picoclaw/pkg/commands"
@@ -57,6 +58,7 @@ type AgentLoop struct {
 	mcp            mcpRuntime
 	hookRuntime    hookRuntime
 	steering       *steeringQueue
+	auditLogger    *audit.Logger
 	pendingSkills  sync.Map
 	mu             sync.RWMutex
 
@@ -112,6 +114,55 @@ const (
 	metadataKeyParentPeerID    = "parent_peer_id"
 )
 
+func (al *AgentLoop) trustPolicyDenyReason(toolName string) string {
+	if al == nil {
+		return ""
+	}
+	switch al.cfg.Trust.EffectiveApprovalPolicy() {
+	case config.ApprovalPolicyAdviceOnly:
+		if isWriteTool(toolName) || toolName == "exec" {
+			return "approval_policy=advice_only blocks write and exec tools"
+		}
+	case config.ApprovalPolicyConfirmWrite:
+		if isWriteTool(toolName) {
+			return "approval_policy=confirm_write blocks write tools until an explicit approver is configured"
+		}
+	case config.ApprovalPolicyConfirmExec:
+		if toolName == "exec" {
+			return "approval_policy=confirm_exec blocks exec until an explicit approver is configured"
+		}
+	}
+	return ""
+}
+
+func (al *AgentLoop) writeToolAudit(
+	ctx context.Context,
+	toolName, decision, reason string,
+	metadata map[string]any,
+) {
+	if al == nil || al.auditLogger == nil {
+		return
+	}
+	_ = al.auditLogger.Write(audit.Entry{
+		Event:    "tool.approval",
+		Tool:     toolName,
+		Decision: decision,
+		Reason:   reason,
+		Channel:  tools.ToolChannel(ctx),
+		ChatID:   tools.ToolChatID(ctx),
+		Metadata: metadata,
+	})
+}
+
+func isWriteTool(toolName string) bool {
+	switch toolName {
+	case "write_file", "edit_file", "append_file":
+		return true
+	default:
+		return false
+	}
+}
+
 func NewAgentLoop(
 	cfg *config.Config,
 	msgBus *bus.MessageBus,
@@ -149,6 +200,7 @@ func NewAgentLoop(
 		fallback:    fallbackChain,
 		cmdRegistry: commands.NewRegistry(commands.BuiltinDefinitions()),
 		steering:    newSteeringQueue(parseSteeringMode(cfg.Agents.Defaults.SteeringMode)),
+		auditLogger: audit.NewLogger(cfg.Trust),
 	}
 	al.hooks = NewHookManager(eventBus)
 	configureHookManagerFromConfig(al.hooks, cfg)
@@ -2377,6 +2429,33 @@ turnLoop:
 				}
 			}
 
+			if reason := al.trustPolicyDenyReason(toolName); reason != "" {
+				allResponsesHandled = false
+				denyContent := hookDeniedToolContent("Tool execution denied by trust policy", reason)
+				al.emitEvent(
+					EventKindToolExecSkipped,
+					ts.eventMeta("runTurn", "turn.tool.skipped"),
+					ToolExecSkippedPayload{
+						Tool:   toolName,
+						Reason: denyContent,
+					},
+				)
+				al.writeToolAudit(turnCtx, toolName, "denied", reason, map[string]any{
+					"agent_id": ts.agent.ID,
+				})
+				deniedMsg := providers.Message{
+					Role:       "tool",
+					Content:    denyContent,
+					ToolCallID: tc.ID,
+				}
+				messages = append(messages, deniedMsg)
+				if !ts.opts.NoHistory {
+					ts.agent.Sessions.AddFullMessage(ts.sessionKey, deniedMsg)
+					ts.recordPersistedMessage(deniedMsg)
+				}
+				continue
+			}
+
 			if al.hooks != nil {
 				approval := al.hooks.ApproveTool(turnCtx, &ToolApprovalRequest{
 					Meta:      ts.eventMeta("runTurn", "turn.tool.approve"),
@@ -2406,6 +2485,9 @@ turnLoop:
 						ts.agent.Sessions.AddFullMessage(ts.sessionKey, deniedMsg)
 						ts.recordPersistedMessage(deniedMsg)
 					}
+					al.writeToolAudit(turnCtx, toolName, "denied", approval.Reason, map[string]any{
+						"agent_id": ts.agent.ID,
+					})
 					continue
 				}
 			}

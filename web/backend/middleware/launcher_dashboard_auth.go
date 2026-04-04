@@ -87,9 +87,6 @@ func ClearLauncherDashboardSessionCookie(w http.ResponseWriter, r *http.Request,
 func LauncherDashboardAuth(cfg LauncherDashboardAuthConfig, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p := canonicalAuthPath(r.URL.Path)
-		if handled := tryLauncherQueryTokenLogin(w, r, p, cfg); handled {
-			return
-		}
 		if isPublicLauncherDashboardPath(r.Method, p) {
 			next.ServeHTTP(w, r)
 			return
@@ -104,47 +101,6 @@ func LauncherDashboardAuth(cfg LauncherDashboardAuthConfig, next http.Handler) h
 
 // canonicalAuthPath matches path cleaning used for routing decisions so
 // prefixes like /assets/../ cannot bypass auth (CVE-class traversal).
-
-// tryLauncherQueryTokenLogin validates ?token= on GET only (non-/api), sets the session
-// cookie when correct, and redirects with 303 so the follow-up is a plain GET without side effects.
-// Invalid token is rejected like any other unauthenticated browser request.
-func tryLauncherQueryTokenLogin(
-	w http.ResponseWriter,
-	r *http.Request,
-	canonicalPath string,
-	cfg LauncherDashboardAuthConfig,
-) bool {
-	if r.Method != http.MethodGet {
-		return false
-	}
-	if canonicalPath == "/api" || strings.HasPrefix(canonicalPath, "/api/") {
-		return false
-	}
-	qToken := strings.TrimSpace(r.URL.Query().Get("token"))
-	if qToken == "" {
-		return false
-	}
-	if len(qToken) != len(cfg.Token) || subtle.ConstantTimeCompare([]byte(qToken), []byte(cfg.Token)) != 1 {
-		rejectLauncherDashboardAuth(w, r, canonicalPath)
-		return true
-	}
-	SetLauncherDashboardSessionCookie(w, r, cfg.ExpectedCookie, cfg.SecureCookie)
-	http.Redirect(w, r, redirectAfterQueryTokenLogin(r, canonicalPath), http.StatusSeeOther)
-	return true
-}
-
-func redirectAfterQueryTokenLogin(r *http.Request, canonicalPath string) string {
-	if canonicalPath == "/launcher-login" {
-		return "/"
-	}
-	q := r.URL.Query()
-	q.Del("token")
-	enc := q.Encode()
-	if enc != "" {
-		return canonicalPath + "?" + enc
-	}
-	return canonicalPath
-}
 
 func canonicalAuthPath(raw string) string {
 	if raw == "" {
@@ -168,6 +124,8 @@ func isPublicLauncherDashboardPath(method, p string) bool {
 	}
 	switch p {
 	case "/api/auth/login":
+		return method == http.MethodPost
+	case "/api/auth/bootstrap":
 		return method == http.MethodPost
 	case "/api/auth/logout":
 		return method == http.MethodPost

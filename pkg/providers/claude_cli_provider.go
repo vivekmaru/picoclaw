@@ -7,20 +7,32 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+
+	"github.com/sipeed/picoclaw/pkg/config"
 )
 
 // ClaudeCliProvider implements LLMProvider using the claude CLI as a subprocess.
 type ClaudeCliProvider struct {
-	command   string
-	workspace string
+	command       string
+	workspace     string
+	executionMode string
 }
 
 // NewClaudeCliProvider creates a new Claude CLI provider.
 func NewClaudeCliProvider(workspace string) *ClaudeCliProvider {
 	return &ClaudeCliProvider{
-		command:   "claude",
-		workspace: workspace,
+		command:       "claude",
+		workspace:     workspace,
+		executionMode: config.ExecutionModeSafe,
 	}
+}
+
+func (p *ClaudeCliProvider) WithExecutionMode(mode string) *ClaudeCliProvider {
+	if p == nil {
+		return nil
+	}
+	p.executionMode = normalizeCLIExecutionMode(mode)
+	return p
 }
 
 // Chat implements LLMProvider.Chat by executing the claude CLI.
@@ -30,7 +42,10 @@ func (p *ClaudeCliProvider) Chat(
 	systemPrompt := p.buildSystemPrompt(messages, tools)
 	prompt := p.messagesToPrompt(messages)
 
-	args := []string{"-p", "--output-format", "json", "--dangerously-skip-permissions", "--no-chrome"}
+	args := []string{"-p", "--output-format", "json", "--no-chrome"}
+	if p.effectiveExecutionMode() == config.ExecutionModePermissive {
+		args = append(args, "--dangerously-skip-permissions")
+	}
 	if systemPrompt != "" {
 		args = append(args, "--system-prompt", systemPrompt)
 	}
@@ -70,6 +85,10 @@ func (p *ClaudeCliProvider) Chat(
 // GetDefaultModel returns the default model identifier.
 func (p *ClaudeCliProvider) GetDefaultModel() string {
 	return "claude-code"
+}
+
+func (p *ClaudeCliProvider) effectiveExecutionMode() string {
+	return normalizeCLIExecutionMode(p.executionMode)
 }
 
 // messagesToPrompt converts messages to a CLI-compatible prompt string.

@@ -36,6 +36,7 @@ func TestLauncherDashboardAuth_AllowsPublicPaths(t *testing.T) {
 		{http.MethodGet, "/launcher-login", http.StatusTeapot},
 		{http.MethodGet, "/assets/index.js", http.StatusTeapot},
 		{http.MethodPost, "/api/auth/login", http.StatusTeapot},
+		{http.MethodPost, "/api/auth/bootstrap", http.StatusTeapot},
 		{http.MethodGet, "/api/auth/status", http.StatusTeapot},
 		{http.MethodPost, "/api/auth/logout", http.StatusTeapot},
 		{http.MethodGet, "/api/auth/logout", http.StatusUnauthorized},
@@ -50,7 +51,7 @@ func TestLauncherDashboardAuth_AllowsPublicPaths(t *testing.T) {
 	}
 }
 
-func TestLauncherDashboardAuth_URLTokenBootstrapGET(t *testing.T) {
+func TestLauncherDashboardAuth_QueryTokenDoesNotBootstrap(t *testing.T) {
 	const tok = "secret"
 	cfg := LauncherDashboardAuthConfig{ExpectedCookie: "deadbeef", Token: tok}
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -61,52 +62,11 @@ func TestLauncherDashboardAuth_URLTokenBootstrapGET(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/?token="+tok, nil)
 	h.ServeHTTP(rec, req)
-	if rec.Code != http.StatusSeeOther {
-		t.Fatalf("GET /?token=valid: status = %d, want %d", rec.Code, http.StatusSeeOther)
+	if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/launcher-login" {
+		t.Fatalf("GET /?token=valid: code=%d loc=%q", rec.Code, rec.Header().Get("Location"))
 	}
-	if got := rec.Header().Get("Location"); got != "/" {
-		t.Fatalf("Location = %q, want %q", got, "/")
-	}
-	if c := rec.Result().Cookies(); len(c) != 1 || c[0].Name != LauncherDashboardCookieName {
-		t.Fatalf("expected one session cookie, got %#v", c)
-	}
-
-	rec1b := httptest.NewRecorder()
-	req1b := httptest.NewRequest(http.MethodGet, "/config?token="+tok+"&keep=1", nil)
-	h.ServeHTTP(rec1b, req1b)
-	if rec1b.Code != http.StatusSeeOther {
-		t.Fatalf("GET /config?token=valid: status = %d", rec1b.Code)
-	}
-	if got := rec1b.Header().Get("Location"); got != "/config?keep=1" {
-		t.Fatalf("Location = %q, want /config?keep=1", got)
-	}
-
-	recBad := httptest.NewRecorder()
-	reqBad := httptest.NewRequest(http.MethodGet, "/?token=wrong", nil)
-	h.ServeHTTP(recBad, reqBad)
-	if recBad.Code != http.StatusFound || recBad.Header().Get("Location") != "/launcher-login" {
-		t.Fatalf("GET /?token=invalid: code=%d loc=%q", recBad.Code, recBad.Header().Get("Location"))
-	}
-
-	rec2 := httptest.NewRecorder()
-	req2 := httptest.NewRequest(http.MethodGet, "/api/config?token="+tok, nil)
-	h.ServeHTTP(rec2, req2)
-	if rec2.Code != http.StatusUnauthorized {
-		t.Fatalf("GET /api with token query: status = %d, want %d", rec2.Code, http.StatusUnauthorized)
-	}
-
-	rec3 := httptest.NewRecorder()
-	req3 := httptest.NewRequest(http.MethodGet, "/?token=", nil)
-	h.ServeHTTP(rec3, req3)
-	if rec3.Code != http.StatusFound {
-		t.Fatalf("GET /?token=empty: status = %d, want redirect", rec3.Code)
-	}
-
-	recLogin := httptest.NewRecorder()
-	reqLogin := httptest.NewRequest(http.MethodGet, "/launcher-login?token="+tok, nil)
-	h.ServeHTTP(recLogin, reqLogin)
-	if recLogin.Code != http.StatusSeeOther || recLogin.Header().Get("Location") != "/" {
-		t.Fatalf("GET /launcher-login?token=valid: code=%d loc=%q", recLogin.Code, recLogin.Header().Get("Location"))
+	if c := rec.Result().Cookies(); len(c) != 0 {
+		t.Fatalf("query token should not create a session cookie, got %#v", c)
 	}
 }
 

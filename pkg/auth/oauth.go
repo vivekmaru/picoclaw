@@ -118,7 +118,13 @@ func LoginBrowser(cfg OAuthProviderConfig) (*AuthCredential, error) {
 		return nil, fmt.Errorf("starting callback server on port %d: %w", cfg.Port, err)
 	}
 
-	server := &http.Server{Handler: mux}
+	server := &http.Server{
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      10 * time.Second,
+		IdleTimeout:       30 * time.Second,
+	}
 	go server.Serve(listener)
 	defer func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)

@@ -84,6 +84,73 @@ func TestLauncherAuthLoginAndStatus(t *testing.T) {
 	})
 }
 
+func TestLauncherAuthBootstrapLoopbackAndSingleUse(t *testing.T) {
+	key := make([]byte, 32)
+	const tok = "dashboard-test-token-9"
+	sess := middleware.SessionCookieValue(key, tok)
+	bootstrap := NewLauncherBootstrapManager(time.Minute)
+	code, err := bootstrap.Issue()
+	if err != nil {
+		t.Fatalf("Issue() error: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	RegisterLauncherAuthRoutes(mux, LauncherAuthRouteOpts{
+		DashboardToken: tok,
+		SessionCookie:  sess,
+		Bootstrap:      bootstrap,
+		TokenHelp:      LauncherAuthTokenHelp{EnvVarName: "PICOCLAW_LAUNCHER_TOKEN"},
+	})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/bootstrap", strings.NewReader(`{"code":"`+code+`"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.RemoteAddr = "127.0.0.1:12345"
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("bootstrap code = %d body=%s", rec.Code, rec.Body.String())
+	}
+	cookies := rec.Result().Cookies()
+	if len(cookies) != 1 || cookies[0].Name != middleware.LauncherDashboardCookieName {
+		t.Fatalf("cookies = %#v", cookies)
+	}
+
+	recReuse := httptest.NewRecorder()
+	reqReuse := httptest.NewRequest(http.MethodPost, "/api/auth/bootstrap", strings.NewReader(`{"code":"`+code+`"}`))
+	reqReuse.Header.Set("Content-Type", "application/json")
+	reqReuse.RemoteAddr = "127.0.0.1:12345"
+	mux.ServeHTTP(recReuse, reqReuse)
+	if recReuse.Code != http.StatusUnauthorized {
+		t.Fatalf("reused bootstrap code = %d body=%s", recReuse.Code, recReuse.Body.String())
+	}
+}
+
+func TestLauncherAuthBootstrapRejectsNonLoopback(t *testing.T) {
+	key := make([]byte, 32)
+	sess := middleware.SessionCookieValue(key, "tok")
+	bootstrap := NewLauncherBootstrapManager(time.Minute)
+	code, err := bootstrap.Issue()
+	if err != nil {
+		t.Fatalf("Issue() error: %v", err)
+	}
+	mux := http.NewServeMux()
+	RegisterLauncherAuthRoutes(mux, LauncherAuthRouteOpts{
+		DashboardToken: "tok",
+		SessionCookie:  sess,
+		Bootstrap:      bootstrap,
+		TokenHelp:      LauncherAuthTokenHelp{EnvVarName: "X"},
+	})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/bootstrap", strings.NewReader(`{"code":"`+code+`"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.RemoteAddr = "192.168.1.10:12345"
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("non-loopback bootstrap = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestLauncherAuthLogoutRequiresPostAndJSON(t *testing.T) {
 	key := make([]byte, 32)
 	sess := middleware.SessionCookieValue(key, "tok")

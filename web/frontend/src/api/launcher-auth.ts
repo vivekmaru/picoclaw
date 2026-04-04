@@ -14,6 +14,18 @@ export async function postLauncherDashboardLogin(
   return res.ok
 }
 
+export async function postLauncherDashboardBootstrap(
+  code: string,
+): Promise<boolean> {
+  const res = await fetch("/api/auth/bootstrap", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "same-origin",
+    body: JSON.stringify({ code: code.trim() }),
+  })
+  return res.ok
+}
+
 export type LauncherAuthTokenHelp = {
   env_var_name: string
   log_file?: string

@@ -34,6 +34,7 @@ type Config struct {
 	ModelList SecureModelList `json:"model_list"         yaml:"model_list"` // New model-centric provider configuration
 	Gateway   GatewayConfig   `json:"gateway"            yaml:"-"`
 	Hooks     HooksConfig     `json:"hooks,omitempty"    yaml:"-"`
+	Trust     TrustConfig     `json:"trust,omitempty"    yaml:"-"`
 	Tools     ToolsConfig     `json:"tools"              yaml:",inline"`
 	Heartbeat HeartbeatConfig `json:"heartbeat"          yaml:"-"`
 	Devices   DevicesConfig   `json:"devices"            yaml:"-"`
@@ -566,6 +567,51 @@ type VoiceConfig struct {
 	EchoTranscription bool   `json:"echo_transcription"       env:"PICOCLAW_VOICE_ECHO_TRANSCRIPTION"`
 }
 
+const (
+	ApprovalPolicyAdviceOnly   = "advice_only"
+	ApprovalPolicyConfirmWrite = "confirm_write"
+	ApprovalPolicyConfirmExec  = "confirm_exec"
+	ApprovalPolicyAllowTrusted = "allow_trusted"
+
+	ExecutionModeSafe       = "safe"
+	ExecutionModePermissive = "permissive"
+)
+
+type AuditConfig struct {
+	Enabled bool   `json:"enabled,omitempty" env:"PICOCLAW_TRUST_AUDIT_ENABLED"`
+	Path    string `json:"path,omitempty"    env:"PICOCLAW_TRUST_AUDIT_PATH"`
+}
+
+type TrustConfig struct {
+	ApprovalPolicy     string      `json:"approval_policy,omitempty"     env:"PICOCLAW_TRUST_APPROVAL_POLICY"`
+	AllowedWorkspaces  []string    `json:"allowed_workspaces,omitempty"  env:"PICOCLAW_TRUST_ALLOWED_WORKSPACES"`
+	AllowedRemoteHosts []string    `json:"allowed_remote_hosts,omitempty" env:"PICOCLAW_TRUST_ALLOWED_REMOTE_HOSTS"`
+	AllowedExecTargets []string    `json:"allowed_exec_targets,omitempty" env:"PICOCLAW_TRUST_ALLOWED_EXEC_TARGETS"`
+	Audit              AuditConfig `json:"audit,omitempty"               envPrefix:"PICOCLAW_TRUST_AUDIT_"`
+}
+
+func (c TrustConfig) EffectiveApprovalPolicy() string {
+	switch strings.ToLower(strings.TrimSpace(c.ApprovalPolicy)) {
+	case ApprovalPolicyAdviceOnly:
+		return ApprovalPolicyAdviceOnly
+	case ApprovalPolicyConfirmWrite:
+		return ApprovalPolicyConfirmWrite
+	case ApprovalPolicyConfirmExec:
+		return ApprovalPolicyConfirmExec
+	case "", ApprovalPolicyAllowTrusted:
+		return ApprovalPolicyAllowTrusted
+	default:
+		return ApprovalPolicyAllowTrusted
+	}
+}
+
+func (c TrustConfig) EffectiveAuditPath() string {
+	if p := strings.TrimSpace(c.Audit.Path); p != "" {
+		return expandHome(p)
+	}
+	return filepath.Join(GetHome(), "logs", "audit.jsonl")
+}
+
 // ModelConfig represents a model-centric provider configuration.
 // It allows adding new providers (especially OpenAI-compatible ones) via configuration only.
 // The model field uses protocol prefix format: [protocol/]model-identifier
@@ -584,9 +630,10 @@ type ModelConfig struct {
 	Fallbacks []string `json:"fallbacks,omitempty"` // Fallback model names for failover
 
 	// Special providers (CLI-based, OAuth, etc.)
-	AuthMethod  string `json:"auth_method,omitempty"`  // Authentication method: oauth, token
-	ConnectMode string `json:"connect_mode,omitempty"` // Connection mode: stdio, grpc
-	Workspace   string `json:"workspace,omitempty"`    // Workspace path for CLI-based providers
+	AuthMethod    string `json:"auth_method,omitempty"`    // Authentication method: oauth, token
+	ConnectMode   string `json:"connect_mode,omitempty"`   // Connection mode: stdio, grpc
+	Workspace     string `json:"workspace,omitempty"`      // Workspace path for CLI-based providers
+	ExecutionMode string `json:"execution_mode,omitempty"` // CLI execution mode: safe, permissive
 
 	// Optional optimizations
 	RPM            int            `json:"rpm,omitempty"`              // Requests per minute limit
@@ -631,6 +678,17 @@ func (c *ModelConfig) Validate() error {
 		return fmt.Errorf("model is required")
 	}
 	return nil
+}
+
+func (c *ModelConfig) EffectiveExecutionMode() string {
+	switch strings.ToLower(strings.TrimSpace(c.ExecutionMode)) {
+	case ExecutionModePermissive:
+		return ExecutionModePermissive
+	case "", ExecutionModeSafe:
+		return ExecutionModeSafe
+	default:
+		return ExecutionModeSafe
+	}
 }
 
 func (c *ModelConfig) SetAPIKey(value string) {

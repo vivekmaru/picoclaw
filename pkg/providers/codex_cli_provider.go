@@ -8,20 +8,32 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+
+	"github.com/sipeed/picoclaw/pkg/config"
 )
 
 // CodexCliProvider implements LLMProvider by wrapping the codex CLI as a subprocess.
 type CodexCliProvider struct {
-	command   string
-	workspace string
+	command       string
+	workspace     string
+	executionMode string
 }
 
 // NewCodexCliProvider creates a new Codex CLI provider.
 func NewCodexCliProvider(workspace string) *CodexCliProvider {
 	return &CodexCliProvider{
-		command:   "codex",
-		workspace: workspace,
+		command:       "codex",
+		workspace:     workspace,
+		executionMode: config.ExecutionModeSafe,
 	}
+}
+
+func (p *CodexCliProvider) WithExecutionMode(mode string) *CodexCliProvider {
+	if p == nil {
+		return nil
+	}
+	p.executionMode = normalizeCLIExecutionMode(mode)
+	return p
 }
 
 // Chat implements LLMProvider.Chat by executing the codex CLI in non-interactive mode.
@@ -37,9 +49,11 @@ func (p *CodexCliProvider) Chat(
 	args := []string{
 		"exec",
 		"--json",
-		"--dangerously-bypass-approvals-and-sandbox",
 		"--skip-git-repo-check",
 		"--color", "never",
+	}
+	if p.effectiveExecutionMode() == config.ExecutionModePermissive {
+		args = append(args, "--dangerously-bypass-approvals-and-sandbox")
 	}
 	if model != "" && model != "codex-cli" {
 		args = append(args, "-m", model)
@@ -84,6 +98,10 @@ func (p *CodexCliProvider) Chat(
 // GetDefaultModel returns the default model identifier.
 func (p *CodexCliProvider) GetDefaultModel() string {
 	return "codex-cli"
+}
+
+func (p *CodexCliProvider) effectiveExecutionMode() string {
+	return normalizeCLIExecutionMode(p.executionMode)
 }
 
 // buildPrompt converts messages to a prompt string for the Codex CLI.

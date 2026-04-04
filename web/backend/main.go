@@ -213,16 +213,16 @@ func main() {
 	// Initialize Server components
 	mux := http.NewServeMux()
 
-	tokenLogFileAbs := ""
-	if fileLoggingEnabled {
-		tokenLogFileAbs = filepath.Join(picoHome, logPath, logFile)
+	var bootstrapManager *api.LauncherBootstrapManager
+	if !effectivePublic && dashboardToken != "" {
+		bootstrapManager = api.NewLauncherBootstrapManager(2 * time.Minute)
 	}
 	api.RegisterLauncherAuthRoutes(mux, api.LauncherAuthRouteOpts{
 		DashboardToken: dashboardToken,
 		SessionCookie:  dashboardSessionCookie,
+		Bootstrap:      bootstrapManager,
 		TokenHelp: api.LauncherAuthTokenHelp{
 			EnvVarName:    "PICOCLAW_LAUNCHER_TOKEN",
-			LogFileAbs:    tokenLogFileAbs,
 			TrayCopyMenu:  trayOffersDashboardTokenCopy(),
 			ConsoleStdout: enableConsole,
 		},
@@ -283,10 +283,6 @@ func main() {
 	if os.Getenv("PICOCLAW_LAUNCHER_TOKEN") != "" {
 		logger.InfoC("web", "Dashboard token: environment PICOCLAW_LAUNCHER_TOKEN")
 	}
-	if !enableConsole && newDashTok {
-		logger.InfoC("web", "Dashboard token (this run): "+dashboardToken)
-	}
-
 	// Log startup info to file
 	logger.InfoC("web", fmt.Sprintf("Server will listen on http://localhost:%s", effectivePort))
 	if effectivePublic {
@@ -297,10 +293,13 @@ func main() {
 
 	// Share the local URL with the launcher runtime.
 	serverAddr = fmt.Sprintf("http://localhost:%s", effectivePort)
-	if dashboardToken != "" {
-		browserLaunchURL = serverAddr + "?token=" + url.QueryEscape(dashboardToken)
-	} else {
-		browserLaunchURL = serverAddr
+	browserLaunchURL = serverAddr
+	if bootstrapManager != nil {
+		if bootstrapCode, issueErr := bootstrapManager.Issue(); issueErr != nil {
+			logger.WarnCF("web", "failed to issue launcher bootstrap code", map[string]any{"error": issueErr.Error()})
+		} else {
+			browserLaunchURL = serverAddr + "/launcher-login#bootstrap=" + url.QueryEscape(bootstrapCode)
+		}
 	}
 
 	// Auto-open browser will be handled by the launcher runtime.
@@ -312,7 +311,14 @@ func main() {
 	}()
 
 	// Start the Server in a goroutine
-	server = &http.Server{Addr: addr, Handler: handler}
+	server = &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       2 * time.Minute,
+	}
 	go func() {
 		logger.InfoC("web", fmt.Sprintf("Server listening on %s", addr))
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {

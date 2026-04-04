@@ -3,6 +3,7 @@ package auth
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -111,6 +112,14 @@ func TestStoreFilePermissions(t *testing.T) {
 	if perm != 0o600 {
 		t.Errorf("file permissions = %o, want 0600", perm)
 	}
+
+	keyInfo, err := os.Stat(filepath.Join(tmpDir, ".picoclaw", "auth.key"))
+	if err != nil {
+		t.Fatalf("Stat(auth.key) error: %v", err)
+	}
+	if perm := keyInfo.Mode().Perm(); perm != 0o600 {
+		t.Errorf("auth.key permissions = %o, want 0600", perm)
+	}
 }
 
 func TestStoreMultiProvider(t *testing.T) {
@@ -185,5 +194,76 @@ func TestLoadStoreEmpty(t *testing.T) {
 	}
 	if len(store.Credentials) != 0 {
 		t.Errorf("expected empty credentials, got %d", len(store.Credentials))
+	}
+}
+
+func TestStoreEncryptsAtRest(t *testing.T) {
+	tmpDir := t.TempDir()
+	origHome := os.Getenv("HOME")
+	t.Setenv("HOME", tmpDir)
+	defer os.Setenv("HOME", origHome)
+
+	cred := &AuthCredential{
+		AccessToken:  "test-access-token",
+		RefreshToken: "test-refresh-token",
+		Provider:     "openai",
+		AuthMethod:   "oauth",
+	}
+	if err := SetCredential("openai", cred); err != nil {
+		t.Fatalf("SetCredential() error: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(tmpDir, ".picoclaw", "auth.json"))
+	if err != nil {
+		t.Fatalf("ReadFile() error: %v", err)
+	}
+	text := string(data)
+	if strings.Contains(text, cred.AccessToken) || strings.Contains(text, cred.RefreshToken) {
+		t.Fatalf("auth.json should not contain plaintext credentials: %s", text)
+	}
+	if !strings.Contains(text, `"ciphertext"`) {
+		t.Fatalf("auth.json should contain encrypted envelope, got: %s", text)
+	}
+}
+
+func TestLoadStoreMigratesLegacyPlaintext(t *testing.T) {
+	tmpDir := t.TempDir()
+	origHome := os.Getenv("HOME")
+	t.Setenv("HOME", tmpDir)
+	defer os.Setenv("HOME", origHome)
+
+	path := filepath.Join(tmpDir, ".picoclaw", "auth.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	legacy := `{
+  "credentials": {
+    "openai": {
+      "access_token": "legacy-access",
+      "refresh_token": "legacy-refresh",
+      "provider": "openai",
+      "auth_method": "oauth"
+    }
+  }
+}`
+	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := LoadStore()
+	if err != nil {
+		t.Fatalf("LoadStore() error: %v", err)
+	}
+	cred := store.Credentials["openai"]
+	if cred == nil || cred.AccessToken != "legacy-access" {
+		t.Fatalf("legacy credential not loaded: %#v", cred)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "legacy-access") {
+		t.Fatalf("legacy auth.json should be migrated to encrypted format: %s", string(data))
 	}
 }

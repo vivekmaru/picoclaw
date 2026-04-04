@@ -597,11 +597,17 @@ For detailed guides beyond this README:
 
 | Topic | Description |
 |-------|-------------|
+| [Documentation Index](docs/README.md) | Entry point for architecture, usage, security, and integration guides |
+| [Architecture](docs/architecture.md) | Runtime components, request flow, trust boundaries |
+| [Usage Guide](docs/usage-guide.md) | Recommended setup, daily workflows, and secure baseline |
+| [Advanced Use Cases](docs/advanced-use-cases.md) | Multi-agent routing, cron, MCP, hybrid deployments |
 | [Docker & Quick Start](docs/docker.md) | Docker Compose setup, Launcher/Agent modes |
 | [Chat Apps](docs/chat-apps.md) | All 17+ channel setup guides |
 | [Configuration](docs/configuration.md) | Environment variables, workspace layout, security sandbox |
+| [Security Review](docs/security-review.md) | Current findings, fixes already applied, and remediation plan |
 | [Scheduled Tasks and Cron Jobs](docs/cron.md) | Cron schedule types, deliver modes, command gates, job storage |
 | [Providers & Models](docs/providers.md) | 30+ LLM providers, model routing, model_list configuration |
+| [Codex & Claude Code](docs/integrations/codex-claude-code.md) | Use Codex CLI and Claude Code as PicoClaw providers |
 | [Spawn & Async Tasks](docs/spawn-tasks.md) | Quick tasks, long tasks with spawn, async sub-agent orchestration |
 | [Hooks](docs/hooks/README.md) | Event-driven hook system: observers, interceptors, approval hooks |
 | [Steering](docs/steering.md) | Inject messages into a running agent loop between tool calls |

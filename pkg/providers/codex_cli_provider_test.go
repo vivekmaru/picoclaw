@@ -511,8 +511,36 @@ echo '{"type":"turn.completed"}'`
 	if !strings.Contains(args, "--json") {
 		t.Errorf("args should contain --json, got: %s", args)
 	}
-	if !strings.Contains(args, "--dangerously-bypass-approvals-and-sandbox") {
-		t.Errorf("args should contain bypass flag, got: %s", args)
+	if strings.Contains(args, "--dangerously-bypass-approvals-and-sandbox") {
+		t.Errorf("args should not contain bypass flag in safe mode, got: %s", args)
+	}
+}
+
+func TestCodexCliProvider_MockCLI_PermissiveMode(t *testing.T) {
+	tmpDir := t.TempDir()
+	scriptPath := filepath.Join(tmpDir, "codex")
+	script := `#!/bin/bash
+echo "$@" > "` + filepath.Join(tmpDir, "args.txt") + `"
+echo '{"type":"item.completed","item":{"id":"1","type":"agent_message","text":"ok"}}'
+echo '{"type":"turn.completed"}'`
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	p := NewCodexCliProvider("/tmp/test-workspace").WithExecutionMode("permissive")
+	p.command = scriptPath
+
+	_, err := p.Chat(context.Background(), []Message{{Role: "user", Content: "test"}}, nil, "", nil)
+	if err != nil {
+		t.Fatalf("Chat() error: %v", err)
+	}
+
+	argsData, err := os.ReadFile(filepath.Join(tmpDir, "args.txt"))
+	if err != nil {
+		t.Fatalf("reading args: %v", err)
+	}
+	if !strings.Contains(string(argsData), "--dangerously-bypass-approvals-and-sandbox") {
+		t.Fatalf("args should contain bypass flag in permissive mode, got: %s", string(argsData))
 	}
 }
 

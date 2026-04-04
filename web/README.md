@@ -125,17 +125,22 @@ The dashboard is protected by a launcher access token.
 
 - If `PICOCLAW_LAUNCHER_TOKEN` is set, that token is used.
 - Otherwise a random token is generated for each launcher process.
-- The browser auto-open URL includes `?token=...` so local launches can sign in automatically.
+- The browser auto-open flow uses a one-time bootstrap code in the URL fragment
+  for same-machine local sign-in.
 - Manual login uses `/launcher-login`.
 - API clients may also authenticate with `Authorization: Bearer <token>`.
+
+Security note:
+
+- the one-time bootstrap is meant for same-machine local launches
+- avoid treating the auto-open URL as a shareable link
+- when using `-public`, set a strong `PICOCLAW_LAUNCHER_TOKEN` and restrict
+  exposure with `allowed_cidrs` where possible
 
 Where users can retrieve the token depends on launch mode:
 
 - Console mode: printed to stdout
 - GUI mode: available through the tray menu on supported builds
-- GUI mode without stdout:
-  - random per-run tokens are written to the launcher log
-  - default log path: `~/.picoclaw/logs/launcher.log`
   - if `PICOCLAW_HOME` is set, use `$PICOCLAW_HOME/logs/launcher.log`
   - env-pinned tokens are not reprinted there; the log only notes that `PICOCLAW_LAUNCHER_TOKEN` is in use
 
@@ -158,6 +163,8 @@ When public access is enabled:
 - the launcher can still protect the dashboard with the access token
 - optional `allowed_cidrs` can restrict which client IP ranges may connect
 - the gateway host is overridden so remote clients can still use the launcher-managed proxy paths
+- the launcher is still best treated as a private admin surface, not a public
+  internet service
 
 ## Build And Run
 
@@ -347,7 +354,7 @@ export PICOCLAW_LAUNCHER_TOKEN="replace-with-a-long-random-token"
 Notes:
 
 - a stable token does not preserve the old cookie-based session by itself
-- when the launcher opens the browser automatically, it appends `?token=...` and signs in again automatically
+- when the launcher opens the browser automatically, it uses a one-time local bootstrap exchange
 - if you reopen the dashboard manually, use the same stable token on `/launcher-login`
 
 ### "Start Gateway" stays disabled
