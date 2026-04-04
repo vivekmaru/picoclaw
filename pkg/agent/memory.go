@@ -12,23 +12,34 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/sipeed/picoclaw/pkg/fileutil"
 )
 
+const recentMemoryContextDays = 3
+
 // MemoryStore manages persistent memory for the agent.
-// - Long-term memory: memory/MEMORY.md
-// - Daily notes: memory/YYYYMM/YYYYMMDD.md
+// Shared memory uses the legacy workspace/memory path.
+// Scoped memory is stored under workspace/memory/teammates/... or
+// workspace/memory/scopes/...
 type MemoryStore struct {
 	workspace  string
 	memoryDir  string
 	memoryFile string
+	scope      string
 }
 
 // NewMemoryStore creates a new MemoryStore with the given workspace path.
 // It ensures the memory directory exists.
 func NewMemoryStore(workspace string) *MemoryStore {
-	memoryDir := filepath.Join(workspace, "memory")
+	return NewMemoryStoreForScope(workspace, "")
+}
+
+// NewMemoryStoreForScope creates a new MemoryStore for a shared or scoped namespace.
+func NewMemoryStoreForScope(workspace, scope string) *MemoryStore {
+	scope = strings.TrimSpace(scope)
+	memoryDir := resolveMemoryDir(workspace, scope)
 	memoryFile := filepath.Join(memoryDir, "MEMORY.md")
 
 	// Ensure memory directory exists
@@ -38,15 +49,61 @@ func NewMemoryStore(workspace string) *MemoryStore {
 		workspace:  workspace,
 		memoryDir:  memoryDir,
 		memoryFile: memoryFile,
+		scope:      normalizedMemoryScope(scope),
 	}
 }
 
 // getTodayFile returns the path to today's daily note file (memory/YYYYMM/YYYYMMDD.md).
 func (ms *MemoryStore) getTodayFile() string {
+	return ms.dailyFileFor(time.Now())
+}
+
+func (ms *MemoryStore) dailyFileFor(date time.Time) string {
 	today := time.Now().Format("20060102") // YYYYMMDD
-	monthDir := today[:6]                  // YYYYMM
+	if !date.IsZero() {
+		today = date.Format("20060102")
+	}
+	monthDir := today[:6]
 	filePath := filepath.Join(ms.memoryDir, monthDir, today+".md")
 	return filePath
+}
+
+func (ms *MemoryStore) LongTermPath() string {
+	return ms.memoryFile
+}
+
+func (ms *MemoryStore) DailyNotesPattern() string {
+	return filepath.Join(ms.memoryDir, "YYYYMM", "YYYYMMDD.md")
+}
+
+func (ms *MemoryStore) Scope() string {
+	return ms.scope
+}
+
+func (ms *MemoryStore) IsShared() bool {
+	return ms.scope == "" || ms.scope == "shared"
+}
+
+func (ms *MemoryStore) DisplayName() string {
+	switch {
+	case ms.IsShared():
+		return "Shared Memory"
+	case strings.HasPrefix(ms.scope, "teammate:"):
+		return fmt.Sprintf("Teammate Memory (%s)", strings.TrimPrefix(ms.scope, "teammate:"))
+	default:
+		return fmt.Sprintf("Scoped Memory (%s)", ms.scope)
+	}
+}
+
+func (ms *MemoryStore) SourcePaths(days int) []string {
+	if days <= 0 {
+		days = recentMemoryContextDays
+	}
+	paths := []string{ms.memoryFile}
+	for i := range days {
+		paths = append(paths, ms.dailyFileFor(time.Now().AddDate(0, 0, -i)))
+	}
+	return uniquePaths(paths)
 }
 
 // ReadLongTerm reads the long-term memory (MEMORY.md).
@@ -133,7 +190,7 @@ func (ms *MemoryStore) GetRecentDailyNotes(days int) string {
 // Includes long-term memory and recent daily notes.
 func (ms *MemoryStore) GetMemoryContext() string {
 	longTerm := ms.ReadLongTerm()
-	recentNotes := ms.GetRecentDailyNotes(3)
+	recentNotes := ms.GetRecentDailyNotes(recentMemoryContextDays)
 
 	if longTerm == "" && recentNotes == "" {
 		return ""
@@ -155,4 +212,90 @@ func (ms *MemoryStore) GetMemoryContext() string {
 	}
 
 	return sb.String()
+}
+
+func normalizedMemoryScope(scope string) string {
+	scope = strings.TrimSpace(scope)
+	if scope == "" || strings.EqualFold(scope, "shared") {
+		return "shared"
+	}
+	return scope
+}
+
+func resolveMemoryDir(workspace, scope string) string {
+	scope = normalizedMemoryScope(scope)
+	if scope == "shared" {
+		return filepath.Join(workspace, "memory")
+	}
+	if strings.HasPrefix(scope, "teammate:") {
+		teammateID := strings.TrimPrefix(scope, "teammate:")
+		segments := sanitizeMemoryScopeSegments(teammateID)
+		return filepath.Join(append([]string{workspace, "memory", "teammates"}, segments...)...)
+	}
+	segments := sanitizeMemoryScopeSegments(scope)
+	return filepath.Join(append([]string{workspace, "memory", "scopes"}, segments...)...)
+}
+
+func sanitizeMemoryScopeSegments(scope string) []string {
+	scope = strings.TrimSpace(scope)
+	if scope == "" {
+		return []string{"default"}
+	}
+
+	rawSegments := strings.FieldsFunc(scope, func(r rune) bool {
+		switch r {
+		case '/', '\\', ':':
+			return true
+		default:
+			return false
+		}
+	})
+	if len(rawSegments) == 0 {
+		rawSegments = []string{"default"}
+	}
+
+	segments := make([]string, 0, len(rawSegments))
+	for _, segment := range rawSegments {
+		sanitized := sanitizeMemoryScopeSegment(segment)
+		if sanitized != "" {
+			segments = append(segments, sanitized)
+		}
+	}
+	if len(segments) == 0 {
+		return []string{"default"}
+	}
+	return segments
+}
+
+func sanitizeMemoryScopeSegment(segment string) string {
+	segment = strings.TrimSpace(segment)
+	if segment == "" {
+		return ""
+	}
+
+	var sb strings.Builder
+	lastDash := false
+	for _, r := range segment {
+		switch {
+		case unicode.IsLetter(r), unicode.IsDigit(r), r == '-', r == '_', r == '.':
+			sb.WriteRune(r)
+			lastDash = false
+		case unicode.IsSpace(r):
+			if !lastDash && sb.Len() > 0 {
+				sb.WriteByte('-')
+				lastDash = true
+			}
+		default:
+			if !lastDash && sb.Len() > 0 {
+				sb.WriteByte('-')
+				lastDash = true
+			}
+		}
+	}
+
+	result := strings.Trim(sb.String(), "-")
+	if result == "" {
+		return "scope"
+	}
+	return result
 }

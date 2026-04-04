@@ -80,6 +80,7 @@ type processOptions struct {
 	ChatID                  string              // Target chat ID for tool execution
 	MessageID               string              // Current inbound platform message ID
 	ReplyToMessageID        string              // Current inbound reply target message ID
+	TeammateID              string              // Teammate profile to use for scoped memory/context
 	SenderID                string              // Current sender ID for dynamic context
 	SenderDisplayName       string              // Current sender display name for dynamic context
 	UserMessage             string              // User message content (may include prefix)
@@ -133,6 +134,28 @@ func (al *AgentLoop) trustPolicyDenyReason(toolName string) string {
 		}
 	}
 	return ""
+}
+
+func (al *AgentLoop) contextBuilderForTurn(agent *AgentInstance, teammateID string) *ContextBuilder {
+	if agent == nil || agent.ContextBuilder == nil {
+		return nil
+	}
+	if al == nil || al.registry == nil {
+		return agent.ContextBuilder
+	}
+
+	if teammateID == "" {
+		if defaultTeammate, ok := al.registry.DefaultTeammateForAgent(agent.ID); ok {
+			return agent.ContextBuilder.ForTeammate(defaultTeammate)
+		}
+		return agent.ContextBuilder
+	}
+
+	if teammate, ok := al.registry.GetTeammate(teammateID); ok {
+		return agent.ContextBuilder.ForTeammate(teammate)
+	}
+
+	return agent.ContextBuilder
 }
 
 func (al *AgentLoop) writeToolAudit(
@@ -467,6 +490,7 @@ func registerSharedTools(
 					Model:        modelToUse,
 					Tools:        tlSlice,
 					SystemPrompt: systemPrompt,
+					TeammateID:   teammateID,
 				}
 				if hasMaxTokens {
 					cfg.MaxTokens = maxTokens
@@ -1798,7 +1822,12 @@ func (al *AgentLoop) runTurn(ctx context.Context, ts *turnState) (turnResult, er
 	}
 	ts.captureRestorePoint(history, summary)
 
-	messages := ts.agent.ContextBuilder.BuildMessages(
+	contextBuilder := al.contextBuilderForTurn(ts.agent, ts.opts.TeammateID)
+	if contextBuilder == nil {
+		return turnResult{}, fmt.Errorf("context builder unavailable for agent %s", ts.agent.ID)
+	}
+
+	messages := contextBuilder.BuildMessages(
 		history,
 		summary,
 		ts.userMessage,
@@ -1838,7 +1867,7 @@ func (al *AgentLoop) runTurn(ctx context.Context, ts *turnState) (turnResult, er
 				history = resp.History
 				summary = resp.Summary
 			}
-			messages = ts.agent.ContextBuilder.BuildMessages(
+			messages = contextBuilder.BuildMessages(
 				history, summary, ts.userMessage,
 				ts.media, ts.channel, ts.chatID,
 				ts.opts.SenderID, ts.opts.SenderDisplayName,
@@ -2224,7 +2253,7 @@ turnLoop:
 					history = asmResp.History
 					summary = asmResp.Summary
 				}
-				messages = ts.agent.ContextBuilder.BuildMessages(
+				messages = contextBuilder.BuildMessages(
 					history, summary, "",
 					nil, ts.channel, ts.chatID, ts.opts.SenderID, ts.opts.SenderDisplayName,
 					activeSkillNames(ts.agent, ts.opts)...,

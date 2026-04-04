@@ -104,6 +104,7 @@ type SubTurnConfig struct {
 	Model        string
 	Tools        []tools.Tool
 	SystemPrompt string
+	TeammateID   string
 	MaxTokens    int
 
 	// Async controls the result delivery mechanism:
@@ -355,6 +356,7 @@ func spawnSubTurn(
 		SessionKey:              childID,
 		Channel:                 parentTS.channel,
 		ChatID:                  parentTS.chatID,
+		TeammateID:              cfg.TeammateID,
 		SenderID:                parentTS.opts.SenderID,
 		SenderDisplayName:       parentTS.opts.SenderDisplayName,
 		UserMessage:             cfg.SystemPrompt, // Task description becomes the first user message

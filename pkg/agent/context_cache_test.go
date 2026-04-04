@@ -276,6 +276,46 @@ func TestMtimeAutoInvalidation(t *testing.T) {
 	})
 }
 
+func TestMtimeAutoInvalidation_TeammateMemory(t *testing.T) {
+	tmpDir := setupWorkspace(t, map[string]string{
+		"memory/MEMORY.md":                    "# Shared\nUse Go.",
+		"memory/teammates/reviewer/MEMORY.md": "# Reviewer\nCheck edge cases.",
+	})
+	defer os.RemoveAll(tmpDir)
+
+	cb := NewContextBuilder(tmpDir).ForTeammate(TeammateProfile{
+		ID:          "reviewer",
+		Name:        "Reviewer",
+		MemoryScope: "teammate:reviewer",
+	})
+
+	sp1 := cb.BuildSystemPromptWithCache()
+
+	fullPath := filepath.Join(tmpDir, "memory", "teammates", "reviewer", "MEMORY.md")
+	if err := os.WriteFile(fullPath, []byte("# Reviewer\nCheck migrations first."), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	future := time.Now().Add(2 * time.Second)
+	if err := os.Chtimes(fullPath, future, future); err != nil {
+		t.Fatalf("Chtimes: %v", err)
+	}
+
+	cb.systemPromptMutex.RLock()
+	changed := cb.sourceFilesChangedLocked()
+	cb.systemPromptMutex.RUnlock()
+	if !changed {
+		t.Fatal("sourceFilesChangedLocked() should detect teammate memory change")
+	}
+
+	sp2 := cb.BuildSystemPromptWithCache()
+	if sp1 == sp2 {
+		t.Fatal("cache not rebuilt after teammate memory change")
+	}
+	if !strings.Contains(sp2, "Check migrations first.") {
+		t.Fatalf("rebuilt prompt missing updated teammate memory:\n%s", sp2)
+	}
+}
+
 // TestExplicitInvalidateCache verifies that InvalidateCache() forces a rebuild
 // even when source files haven't changed (useful for tests and reload commands).
 func TestExplicitInvalidateCache(t *testing.T) {
