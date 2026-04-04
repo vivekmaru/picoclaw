@@ -79,6 +79,13 @@ func (t *SpawnTool) SetRequesterIdentity(agentID, teammateID string) {
 	t.requesterTeammateID = teammateID
 }
 
+func (t *SpawnTool) Manager() *SubagentManager {
+	if t == nil {
+		return nil
+	}
+	return t.manager
+}
+
 func (t *SpawnTool) Execute(ctx context.Context, args map[string]any) *ToolResult {
 	return t.execute(ctx, args, nil)
 }

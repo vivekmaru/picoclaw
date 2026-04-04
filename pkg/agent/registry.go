@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"slices"
 	"sync"
 
 	"github.com/sipeed/picoclaw/pkg/config"
@@ -99,7 +100,24 @@ func (r *AgentRegistry) ListTeammateIDs() []string {
 	for id := range r.teammates {
 		ids = append(ids, id)
 	}
+	slices.Sort(ids)
 	return ids
+}
+
+func (r *AgentRegistry) ListTeammates() []TeammateProfile {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	ids := make([]string, 0, len(r.teammates))
+	for id := range r.teammates {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+
+	profiles := make([]TeammateProfile, 0, len(ids))
+	for _, id := range ids {
+		profiles = append(profiles, r.teammates[id])
+	}
+	return profiles
 }
 
 func (r *AgentRegistry) DefaultTeammateForAgent(agentID string) (TeammateProfile, bool) {

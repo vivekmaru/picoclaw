@@ -59,6 +59,9 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	// Gateway process lifecycle
 	h.registerGatewayRoutes(mux)
 
+	// Live agent runtime state exposed via the gateway
+	h.registerAgentRuntimeRoutes(mux)
+
 	// Session history
 	h.registerSessionRoutes(mux)
 

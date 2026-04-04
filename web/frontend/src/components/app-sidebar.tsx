@@ -10,6 +10,7 @@ import {
   IconSettings,
   IconSparkles,
   IconTools,
+  IconUsers,
 } from "@tabler/icons-react"
 import { Link, useRouterState } from "@tanstack/react-router"
 import * as React from "react"
@@ -142,6 +143,12 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             title: "navigation.skills",
             url: "/agent/skills",
             icon: IconSparkles,
+            translateTitle: true,
+          },
+          {
+            title: "navigation.teammates",
+            url: "/agent/teammates",
+            icon: IconUsers,
             translateTitle: true,
           },
           {

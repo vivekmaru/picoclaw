@@ -21,6 +21,13 @@ func NewSpawnStatusTool(manager *SubagentManager) *SpawnStatusTool {
 	return &SpawnStatusTool{manager: manager}
 }
 
+func (t *SpawnStatusTool) Manager() *SubagentManager {
+	if t == nil {
+		return nil
+	}
+	return t.manager
+}
+
 func (t *SpawnStatusTool) Name() string {
 	return "spawn_status"
 }

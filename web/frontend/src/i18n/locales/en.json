@@ -7,6 +7,7 @@
     "agent_group": "Agent",
     "hub": "Hub",
     "skills": "Skills",
+    "teammates": "Teammates",
     "tools": "Tools",
     "services": "Services",
     "channels_group": "Channels",
@@ -389,6 +390,37 @@
   "pages": {
     "agent": {
       "load_error": "Failed to load agent support information.",
+      "teammates": {
+        "title": "Teammate Profiles",
+        "description": "Live teammate profiles resolved by the running gateway, including their delegated memory scopes and model bindings.",
+        "empty": "No teammate profiles are active in the current gateway runtime.",
+        "task_title": "Delegation Tasks",
+        "task_description": "Tracked spawned tasks visible from the running gateway.",
+        "tasks_empty": "No tracked delegation tasks yet.",
+        "load_error": "Failed to load live teammate runtime data.",
+        "summary": {
+          "agents": "Agents",
+          "agents_desc": "Runtime execution units currently registered.",
+          "teammates": "Teammates",
+          "teammates_desc": "Resolved teammate profiles available for delegation.",
+          "tasks": "Tracked Tasks",
+          "tasks_desc": "Delegation tasks currently tracked across agents."
+        },
+        "fields": {
+          "agent": "Agent",
+          "model": "Model",
+          "memory": "Memory Scope",
+          "approval": "Approval Policy",
+          "workspaces": "Workspace Scope",
+          "tools": "Toolset"
+        },
+        "task_fields": {
+          "requester": "Requester",
+          "memory": "Memory Scope",
+          "created": "Created",
+          "completed": "Completed"
+        }
+      },
       "skills": {
         "empty": "No skills are currently available.",
         "install_success": "Installed {{name}}.",
