@@ -217,6 +217,25 @@ func TestAgentRegistry_DefaultTeammateForAgent(t *testing.T) {
 	}
 }
 
+func TestAgentRegistry_DefaultTeammateForAgentUsesStableSortedFallback(t *testing.T) {
+	cfg := testCfg([]config.AgentConfig{
+		{ID: "ops", Default: true, Name: "Ops"},
+	})
+	cfg.Teammates.List = []config.TeammateConfig{
+		{ID: "reviewer", AgentID: "ops"},
+		{ID: "analyst", AgentID: "ops"},
+	}
+
+	registry := NewAgentRegistry(cfg, &mockRegistryProvider{})
+	teammate, ok := registry.DefaultTeammateForAgent("ops")
+	if !ok {
+		t.Fatal("expected default teammate for agent")
+	}
+	if teammate.ID != "analyst" {
+		t.Fatalf("teammate.ID = %q, want analyst", teammate.ID)
+	}
+}
+
 func TestAgentInstance_Model(t *testing.T) {
 	model := &config.AgentModelConfig{Primary: "claude-opus"}
 	cfg := testCfg([]config.AgentConfig{

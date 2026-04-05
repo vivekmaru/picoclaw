@@ -156,7 +156,7 @@ func TestSpawnTool_Execute_NilManager(t *testing.T) {
 
 func TestSubagentManager_LoadPersistedTasksMarksInterrupted(t *testing.T) {
 	workspace := t.TempDir()
-	stateFile := filepath.Join(workspace, "state", "subagents", "tasks.json")
+	stateFile := filepath.Join(workspace, "state", "subagents", "main", "tasks.json")
 	storeData, err := json.MarshalIndent(subagentTaskStore{
 		Version: subagentTaskStoreVersion,
 		NextID:  4,
@@ -176,7 +176,7 @@ func TestSubagentManager_LoadPersistedTasksMarksInterrupted(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	manager := NewSubagentManager(&MockLLMProvider{}, "test-model", workspace)
+	manager := NewSubagentManager(&MockLLMProvider{}, "test-model", workspace, "main")
 
 	task1, ok := manager.GetTaskCopy("subagent-1")
 	if !ok {
@@ -214,11 +214,12 @@ func TestSubagentManager_LoadPersistedTasksMarksInterrupted(t *testing.T) {
 	if spawned.ID != "subagent-4" {
 		t.Fatalf("spawned.ID = %q, want subagent-4", spawned.ID)
 	}
+	waitForTaskStatus(t, manager, spawned.ID, "completed")
 }
 
 func TestSubagentManager_CancelTaskPersistsState(t *testing.T) {
 	workspace := t.TempDir()
-	manager := NewSubagentManager(&MockLLMProvider{}, "test-model", workspace)
+	manager := NewSubagentManager(&MockLLMProvider{}, "test-model", workspace, "main")
 
 	started := make(chan struct{})
 	manager.SetSpawner(func(
@@ -263,7 +264,7 @@ func TestSubagentManager_CancelTaskPersistsState(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 
-	stateFile := filepath.Join(workspace, "state", "subagents", "tasks.json")
+	stateFile := filepath.Join(workspace, "state", "subagents", "main", "tasks.json")
 	data, err := os.ReadFile(stateFile)
 	if err != nil {
 		t.Fatalf("ReadFile() error = %v", err)
@@ -275,7 +276,7 @@ func TestSubagentManager_CancelTaskPersistsState(t *testing.T) {
 
 func TestSubagentManager_ApprovalWorkflow(t *testing.T) {
 	workspace := t.TempDir()
-	manager := NewSubagentManager(&MockLLMProvider{}, "test-model", workspace)
+	manager := NewSubagentManager(&MockLLMProvider{}, "test-model", workspace, "main")
 	manager.SetTeammateResolver(func(teammateID string) (TaskTeammate, bool) {
 		if teammateID != "operator" {
 			return TaskTeammate{}, false
@@ -345,7 +346,7 @@ func TestSubagentManager_ApprovalWorkflow(t *testing.T) {
 
 func TestSubagentManager_RejectTask(t *testing.T) {
 	workspace := t.TempDir()
-	manager := NewSubagentManager(&MockLLMProvider{}, "test-model", workspace)
+	manager := NewSubagentManager(&MockLLMProvider{}, "test-model", workspace, "main")
 	manager.SetTeammateResolver(func(teammateID string) (TaskTeammate, bool) {
 		return TaskTeammate{
 			ID:             teammateID,
@@ -382,5 +383,78 @@ func TestSubagentManager_RejectTask(t *testing.T) {
 	}
 	if rejected.RejectedBy != "launcher" {
 		t.Fatalf("RejectTask() rejected_by = %q, want launcher", rejected.RejectedBy)
+	}
+	waitForTaskStatus(t, manager, task.ID, "denied")
+}
+
+func TestSubagentManager_PersistsTasksPerAgent(t *testing.T) {
+	workspace := t.TempDir()
+	provider := &MockLLMProvider{}
+	agentA := NewSubagentManager(provider, "test-model", workspace, "agent-a")
+	agentB := NewSubagentManager(provider, "test-model", workspace, "agent-b")
+
+	agentA.SetSpawner(func(
+		ctx context.Context,
+		task, label, agentID, teammateID string,
+		tls *ToolRegistry,
+		maxTokens int,
+		temperature float64,
+		hasMaxTokens, hasTemperature bool,
+	) (*ToolResult, error) {
+		return &ToolResult{ForLLM: "done-a"}, nil
+	})
+	agentB.SetSpawner(func(
+		ctx context.Context,
+		task, label, agentID, teammateID string,
+		tls *ToolRegistry,
+		maxTokens int,
+		temperature float64,
+		hasMaxTokens, hasTemperature bool,
+	) (*ToolResult, error) {
+		return &ToolResult{ForLLM: "done-b"}, nil
+	})
+
+	if _, err := agentA.Spawn(context.Background(), SpawnRequest{Task: "task a"}, nil); err != nil {
+		t.Fatalf("agentA Spawn() error = %v", err)
+	}
+	taskB, err := agentB.Spawn(context.Background(), SpawnRequest{Task: "task b"}, nil)
+	if err != nil {
+		t.Fatalf("agentB Spawn() error = %v", err)
+	}
+	waitForTaskStatus(t, agentA, "subagent-1", "completed")
+	waitForTaskStatus(t, agentB, taskB.ID, "completed")
+
+	dataA, err := os.ReadFile(filepath.Join(workspace, "state", "subagents", "agent-a", "tasks.json"))
+	if err != nil {
+		t.Fatalf("ReadFile(agent-a) error = %v", err)
+	}
+	dataB, err := os.ReadFile(filepath.Join(workspace, "state", "subagents", "agent-b", "tasks.json"))
+	if err != nil {
+		t.Fatalf("ReadFile(agent-b) error = %v", err)
+	}
+
+	if strings.Contains(string(dataA), "task b") {
+		t.Fatalf("agent-a store should not contain agent-b tasks: %s", string(dataA))
+	}
+	if strings.Contains(string(dataB), "task a") {
+		t.Fatalf("agent-b store should not contain agent-a tasks: %s", string(dataB))
+	}
+}
+
+func waitForTaskStatus(t *testing.T, manager *SubagentManager, taskID, want string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		task, ok := manager.GetTaskCopy(taskID)
+		if !ok {
+			t.Fatalf("task %s disappeared", taskID)
+		}
+		if task.Status == want {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("task %s status = %q, want %q", taskID, task.Status, want)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
