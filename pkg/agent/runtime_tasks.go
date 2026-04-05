@@ -135,6 +135,25 @@ func (al *AgentLoop) CreateRuntimeMemoryProposalFromTask(ownerAgentID, taskID, s
 	return runtimeMemoryProposalInfo(ownerAgentID, proposal), nil
 }
 
+func (al *AgentLoop) UpdateRuntimeMemoryProposal(
+	ownerAgentID, proposalID, actor string,
+	update MemoryProposalUpdate,
+) (RuntimeMemoryProposalInfo, error) {
+	registry := al.GetRegistry()
+	store := runtimeMemoryProposalStoreForAgent(registry, ownerAgentID)
+	if store == nil {
+		return RuntimeMemoryProposalInfo{}, fmt.Errorf("%w: owner agent %q", ErrRuntimeMemoryProposalNotFound, ownerAgentID)
+	}
+	proposal, err := store.Update(proposalID, actor, update)
+	if err != nil {
+		if _, ok := store.GetCopy(proposalID); !ok {
+			return RuntimeMemoryProposalInfo{}, fmt.Errorf("%w: %s", ErrRuntimeMemoryProposalNotFound, proposalID)
+		}
+		return RuntimeMemoryProposalInfo{}, fmt.Errorf("%w: %v", ErrRuntimeMemoryProposalNotPending, err)
+	}
+	return runtimeMemoryProposalInfo(ownerAgentID, proposal), nil
+}
+
 func (al *AgentLoop) ApproveRuntimeMemoryProposal(ownerAgentID, proposalID, actor, note string) (RuntimeMemoryProposalInfo, error) {
 	registry := al.GetRegistry()
 	store := runtimeMemoryProposalStoreForAgent(registry, ownerAgentID)

@@ -216,6 +216,10 @@ func TestHandleApproveAgentRuntimeTask_ProxySuccess(t *testing.T) {
 		if req.URL.String() != "http://127.0.0.1:18790/runtime/agent/tasks/main/subagent-1/approve" {
 			t.Fatalf("URL = %q", req.URL.String())
 		}
+		body, _ := io.ReadAll(req.Body)
+		if !strings.Contains(string(body), `"actor":"operator"`) || !strings.Contains(string(body), `"note":"Looks safe"`) {
+			t.Fatalf("request body = %s", string(body))
+		}
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Body: io.NopCloser(strings.NewReader(`{
@@ -231,7 +235,7 @@ func TestHandleApproveAgentRuntimeTask_ProxySuccess(t *testing.T) {
 	mux := http.NewServeMux()
 	h.registerAgentRuntimeRoutes(mux)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/agent/runtime/tasks/main/subagent-1/approve", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/agent/runtime/tasks/main/subagent-1/approve", strings.NewReader(`{"actor":"operator","note":"Looks safe"}`))
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -323,6 +327,10 @@ func TestHandleApproveAgentRuntimeMemoryProposal_ProxySuccess(t *testing.T) {
 		if req.URL.String() != "http://127.0.0.1:18790/runtime/agent/memory-proposals/main/memory-1/approve" {
 			t.Fatalf("URL = %q", req.URL.String())
 		}
+		body, _ := io.ReadAll(req.Body)
+		if !strings.Contains(string(body), `"actor":"operator"`) || !strings.Contains(string(body), `"note":"Keep this"`) {
+			t.Fatalf("request body = %s", string(body))
+		}
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Body: io.NopCloser(strings.NewReader(`{
@@ -342,7 +350,7 @@ func TestHandleApproveAgentRuntimeMemoryProposal_ProxySuccess(t *testing.T) {
 	mux := http.NewServeMux()
 	h.registerAgentRuntimeRoutes(mux)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/agent/runtime/memory-proposals/main/memory-1/approve", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/agent/runtime/memory-proposals/main/memory-1/approve", strings.NewReader(`{"actor":"operator","note":"Keep this"}`))
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -350,6 +358,68 @@ func TestHandleApproveAgentRuntimeMemoryProposal_ProxySuccess(t *testing.T) {
 		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusOK, rec.Body.String())
 	}
 	if !strings.Contains(rec.Body.String(), `"status":"approved"`) {
+		t.Fatalf("response = %s", rec.Body.String())
+	}
+}
+
+func TestHandleUpdateAgentRuntimeMemoryProposal_ProxySuccess(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	cfg := config.DefaultConfig()
+	if err := config.SaveConfig(configPath, cfg); err != nil {
+		t.Fatalf("SaveConfig() error = %v", err)
+	}
+
+	originalRead := readGatewayPIDDataForRuntime
+	originalDo := gatewayRuntimeDo
+	t.Cleanup(func() {
+		readGatewayPIDDataForRuntime = originalRead
+		gatewayRuntimeDo = originalDo
+	})
+
+	readGatewayPIDDataForRuntime = func() *ppid.PidFileData {
+		return &ppid.PidFileData{PID: 123, Host: "127.0.0.1", Port: 18790, Token: "pid-secret"}
+	}
+	gatewayRuntimeDo = func(req *http.Request, timeout time.Duration) (*http.Response, error) {
+		if req.URL.String() != "http://127.0.0.1:18790/runtime/agent/memory-proposals/main/memory-1/update" {
+			t.Fatalf("URL = %q", req.URL.String())
+		}
+		body, _ := io.ReadAll(req.Body)
+		payload := string(body)
+		if !strings.Contains(payload, `"actor":"operator"`) ||
+			!strings.Contains(payload, `"scope":"teammate:reviewer"`) ||
+			!strings.Contains(payload, `"title":"Edited"`) ||
+			!strings.Contains(payload, `"content":"Remember this instead"`) {
+			t.Fatalf("request body = %s", payload)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body: io.NopCloser(strings.NewReader(`{
+				"owner_agent_id":"main",
+				"id":"memory-1",
+				"scope":"teammate:reviewer",
+				"target":"long_term",
+				"kind":"task_result",
+				"status":"pending",
+				"title":"Edited",
+				"content":"Remember this instead",
+				"updated_by":"operator"
+			}`)),
+			Header: make(http.Header),
+		}, nil
+	}
+
+	h := NewHandler(configPath)
+	mux := http.NewServeMux()
+	h.registerAgentRuntimeRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/agent/runtime/memory-proposals/main/memory-1/update", strings.NewReader(`{"actor":"operator","scope":"teammate:reviewer","title":"Edited","content":"Remember this instead"}`))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"updated_by":"operator"`) {
 		t.Fatalf("response = %s", rec.Body.String())
 	}
 }

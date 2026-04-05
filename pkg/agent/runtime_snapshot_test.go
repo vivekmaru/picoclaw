@@ -276,12 +276,33 @@ func TestAgentLoopRuntimeApprovalAndMemoryReview(t *testing.T) {
 		t.Fatalf("proposal.Status = %q, want pending", proposal.Status)
 	}
 
-	approvedProposal, err := loop.ApproveRuntimeMemoryProposal("main", proposal.ID, "launcher", "")
+	updatedProposal, err := loop.UpdateRuntimeMemoryProposal("main", proposal.ID, "operator", MemoryProposalUpdate{
+		Scope:   "teammate:operator",
+		Title:   "Approved server runbook",
+		Content: "Capture the approved server runbook in teammate memory.",
+	})
+	if err != nil {
+		t.Fatalf("UpdateRuntimeMemoryProposal() error = %v", err)
+	}
+	if updatedProposal.Scope != "teammate:operator" {
+		t.Fatalf("updatedProposal.Scope = %q, want teammate:operator", updatedProposal.Scope)
+	}
+	if updatedProposal.UpdatedBy != "operator" {
+		t.Fatalf("updatedProposal.UpdatedBy = %q, want operator", updatedProposal.UpdatedBy)
+	}
+
+	approvedProposal, err := loop.ApproveRuntimeMemoryProposal("main", proposal.ID, "launcher", "Ship this")
 	if err != nil {
 		t.Fatalf("ApproveRuntimeMemoryProposal() error = %v", err)
 	}
 	if approvedProposal.Status != "approved" {
 		t.Fatalf("approvedProposal.Status = %q, want approved", approvedProposal.Status)
+	}
+	if approvedProposal.ReviewedBy != "launcher" {
+		t.Fatalf("approvedProposal.ReviewedBy = %q, want launcher", approvedProposal.ReviewedBy)
+	}
+	if approvedProposal.ReviewNote != "Ship this" {
+		t.Fatalf("approvedProposal.ReviewNote = %q, want Ship this", approvedProposal.ReviewNote)
 	}
 
 	snapshot := loop.GetRuntimeSnapshot()

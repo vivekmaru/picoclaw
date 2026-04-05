@@ -445,8 +445,15 @@
           "title": "提交到记忆审核",
           "shared": "提交到共享记忆",
           "teammate": "提交到队友记忆",
+          "save": "保存提案草稿",
           "approve": "批准记忆",
           "reject": "拒绝记忆"
+        },
+        "review_fields": {
+          "actor": "审核人",
+          "actor_placeholder": "launcher",
+          "note": "审核备注",
+          "note_placeholder": "说明为何批准、拒绝或修改该项"
         },
         "fields": {
           "agent": "Agent",
@@ -479,12 +486,18 @@
           "target": "目标",
           "kind": "类型",
           "status": "状态",
+          "title": "标题",
+          "title_placeholder": "记忆摘要",
           "source_task": "来源任务",
           "source_teammate": "来源队友",
           "created": "创建时间",
+          "updated": "最后编辑",
           "reviewed": "审核信息",
+          "review_note": "审核备注",
           "content": "内容"
-        }
+        },
+        "memory_proposal_update_success": "已更新记忆提案 {{id}}。",
+        "memory_proposal_update_error": "更新所选记忆提案失败。"
       },
       "skills": {
         "empty": "当前没有可用技能。",

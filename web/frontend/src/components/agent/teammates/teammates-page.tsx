@@ -16,6 +16,7 @@ import {
   getAgentRuntimeTask,
   rejectAgentRuntimeMemoryProposal,
   rejectAgentRuntimeTask,
+  updateAgentRuntimeMemoryProposal,
   type AgentRuntimeMemoryProposal,
   type AgentRuntimeTask,
 } from "@/api/agent-runtime"
@@ -31,6 +32,7 @@ import {
 } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
+import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/lib/utils"
 
 const RUNTIME_POLL_MS = 3000
@@ -43,6 +45,15 @@ export function TeammatesPage() {
   const [memoryStatusFilter, setMemoryStatusFilter] = useState("all")
   const [selectedTaskKey, setSelectedTaskKey] = useState("")
   const [selectedProposalKey, setSelectedProposalKey] = useState("")
+  const [taskReviewForms, setTaskReviewForms] = useState<
+    Record<string, { actor: string; note: string }>
+  >({})
+  const [proposalEditors, setProposalEditors] = useState<
+    Record<
+      string,
+      { actor: string; note: string; scope: string; title: string; content: string }
+    >
+  >({})
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["agent-runtime"],
@@ -141,6 +152,26 @@ export function TeammatesPage() {
 
   const taskDetail = taskDetailQuery.data ?? selectedTask
 
+  const selectedTaskReview = taskDetail
+    ? taskReviewForms[taskKey(taskDetail)] ?? { actor: "launcher", note: "" }
+    : { actor: "launcher", note: "" }
+
+  const selectedProposalEditor = selectedProposal
+    ? proposalEditors[proposalKey(selectedProposal)] ?? {
+        actor: "launcher",
+        note: "",
+        scope: selectedProposal.scope,
+        title: selectedProposal.title ?? "",
+        content: selectedProposal.content,
+      }
+    : {
+        actor: "launcher",
+        note: "",
+        scope: "shared",
+        title: "",
+        content: "",
+      }
+
   const invalidateRuntime = () => {
     void queryClient.invalidateQueries({ queryKey: ["agent-runtime"] })
     if (taskDetail) {
@@ -163,10 +194,24 @@ export function TeammatesPage() {
   })
 
   const approveTaskMutation = useMutation({
-    mutationFn: ({ ownerAgentID, taskID }: { ownerAgentID: string; taskID: string }) =>
-      approveAgentRuntimeTask(ownerAgentID, taskID),
+    mutationFn: ({
+      ownerAgentID,
+      taskID,
+      actor,
+      note,
+    }: {
+      ownerAgentID: string
+      taskID: string
+      actor: string
+      note: string
+    }) => approveAgentRuntimeTask(ownerAgentID, taskID, actor, note),
     onSuccess: (task) => {
       toast.success(t("pages.agent.teammates.task_approve_success", { id: task.id }))
+      setTaskReviewForms((current) => {
+        const next = { ...current }
+        delete next[taskKey(task)]
+        return next
+      })
       invalidateRuntime()
     },
     onError: (mutationError: Error) => {
@@ -175,10 +220,24 @@ export function TeammatesPage() {
   })
 
   const rejectTaskMutation = useMutation({
-    mutationFn: ({ ownerAgentID, taskID }: { ownerAgentID: string; taskID: string }) =>
-      rejectAgentRuntimeTask(ownerAgentID, taskID),
+    mutationFn: ({
+      ownerAgentID,
+      taskID,
+      actor,
+      note,
+    }: {
+      ownerAgentID: string
+      taskID: string
+      actor: string
+      note: string
+    }) => rejectAgentRuntimeTask(ownerAgentID, taskID, actor, note),
     onSuccess: (task) => {
       toast.success(t("pages.agent.teammates.task_reject_success", { id: task.id }))
+      setTaskReviewForms((current) => {
+        const next = { ...current }
+        delete next[taskKey(task)]
+        return next
+      })
       invalidateRuntime()
     },
     onError: (mutationError: Error) => {
@@ -216,16 +275,25 @@ export function TeammatesPage() {
     mutationFn: ({
       ownerAgentID,
       proposalID,
+      actor,
+      note,
     }: {
       ownerAgentID: string
       proposalID: string
-    }) => approveAgentRuntimeMemoryProposal(ownerAgentID, proposalID),
+      actor: string
+      note: string
+    }) => approveAgentRuntimeMemoryProposal(ownerAgentID, proposalID, actor, note),
     onSuccess: (proposal) => {
       toast.success(
         t("pages.agent.teammates.memory_proposal_approve_success", {
           id: proposal.id,
         }),
       )
+      setProposalEditors((current) => {
+        const next = { ...current }
+        delete next[proposalKey(proposal)]
+        return next
+      })
       invalidateRuntime()
     },
     onError: (mutationError: Error) => {
@@ -240,16 +308,25 @@ export function TeammatesPage() {
     mutationFn: ({
       ownerAgentID,
       proposalID,
+      actor,
+      note,
     }: {
       ownerAgentID: string
       proposalID: string
-    }) => rejectAgentRuntimeMemoryProposal(ownerAgentID, proposalID),
+      actor: string
+      note: string
+    }) => rejectAgentRuntimeMemoryProposal(ownerAgentID, proposalID, actor, note),
     onSuccess: (proposal) => {
       toast.success(
         t("pages.agent.teammates.memory_proposal_reject_success", {
           id: proposal.id,
         }),
       )
+      setProposalEditors((current) => {
+        const next = { ...current }
+        delete next[proposalKey(proposal)]
+        return next
+      })
       invalidateRuntime()
     },
     onError: (mutationError: Error) => {
@@ -259,6 +336,90 @@ export function TeammatesPage() {
       )
     },
   })
+
+  const updateMemoryProposalMutation = useMutation({
+    mutationFn: ({
+      ownerAgentID,
+      proposalID,
+      actor,
+      scope,
+      title,
+      content,
+    }: {
+      ownerAgentID: string
+      proposalID: string
+      actor: string
+      scope: string
+      title: string
+      content: string
+    }) =>
+      updateAgentRuntimeMemoryProposal(ownerAgentID, proposalID, {
+        actor,
+        scope,
+        title,
+        content,
+      }),
+    onSuccess: (proposal) => {
+      toast.success(
+        t("pages.agent.teammates.memory_proposal_update_success", {
+          id: proposal.id,
+        }),
+      )
+      setProposalEditors((current) => {
+        const next = { ...current }
+        delete next[proposalKey(proposal)]
+        return next
+      })
+      invalidateRuntime()
+    },
+    onError: (mutationError: Error) => {
+      toast.error(
+        mutationError?.message ||
+          t("pages.agent.teammates.memory_proposal_update_error"),
+      )
+    },
+  })
+
+  const updateSelectedTaskReview = (patch: Partial<{ actor: string; note: string }>) => {
+    if (!taskDetail) {
+      return
+    }
+    const key = taskKey(taskDetail)
+    setTaskReviewForms((current) => ({
+      ...current,
+      [key]: {
+        actor: selectedTaskReview.actor,
+        note: selectedTaskReview.note,
+        ...patch,
+      },
+    }))
+  }
+
+  const updateSelectedProposalEditor = (
+    patch: Partial<{
+      actor: string
+      note: string
+      scope: string
+      title: string
+      content: string
+    }>,
+  ) => {
+    if (!selectedProposal) {
+      return
+    }
+    const key = proposalKey(selectedProposal)
+    setProposalEditors((current) => ({
+      ...current,
+      [key]: {
+        actor: selectedProposalEditor.actor,
+        note: selectedProposalEditor.note,
+        scope: selectedProposalEditor.scope,
+        title: selectedProposalEditor.title,
+        content: selectedProposalEditor.content,
+        ...patch,
+      },
+    }))
+  }
 
   return (
     <div className="bg-background flex h-full flex-col">
@@ -390,14 +551,22 @@ export function TeammatesPage() {
                     approveTaskMutation.mutate({
                       ownerAgentID: task.owner_agent_id,
                       taskID: task.id,
+                      actor: selectedTaskReview.actor,
+                      note: selectedTaskReview.note,
                     })
                   }
                   onReject={(task) =>
                     rejectTaskMutation.mutate({
                       ownerAgentID: task.owner_agent_id,
                       taskID: task.id,
+                      actor: selectedTaskReview.actor,
+                      note: selectedTaskReview.note,
                     })
                   }
+                  reviewActor={selectedTaskReview.actor}
+                  reviewNote={selectedTaskReview.note}
+                  setReviewActor={(value) => updateSelectedTaskReview({ actor: value })}
+                  setReviewNote={(value) => updateSelectedTaskReview({ note: value })}
                   onProposeShared={(task) =>
                     createMemoryProposalMutation.mutate({
                       ownerAgentID: task.owner_agent_id,
@@ -434,15 +603,36 @@ export function TeammatesPage() {
                   approveMemoryProposalMutation.mutate({
                     ownerAgentID: proposal.owner_agent_id,
                     proposalID: proposal.id,
+                    actor: selectedProposalEditor.actor,
+                    note: selectedProposalEditor.note,
                   })
                 }
                 onReject={(proposal) =>
                   rejectMemoryProposalMutation.mutate({
                     ownerAgentID: proposal.owner_agent_id,
                     proposalID: proposal.id,
+                    actor: selectedProposalEditor.actor,
+                    note: selectedProposalEditor.note,
                   })
                 }
+                onUpdate={(proposal) =>
+                  updateMemoryProposalMutation.mutate({
+                    ownerAgentID: proposal.owner_agent_id,
+                    proposalID: proposal.id,
+                    actor: selectedProposalEditor.actor,
+                    scope: selectedProposalEditor.scope,
+                    title: selectedProposalEditor.title,
+                    content: selectedProposalEditor.content,
+                  })
+                }
+                editor={selectedProposalEditor}
+                setEditorActor={(value) => updateSelectedProposalEditor({ actor: value })}
+                setEditorNote={(value) => updateSelectedProposalEditor({ note: value })}
+                setEditorScope={(value) => updateSelectedProposalEditor({ scope: value })}
+                setEditorTitle={(value) => updateSelectedProposalEditor({ title: value })}
+                setEditorContent={(value) => updateSelectedProposalEditor({ content: value })}
                 busy={
+                  updateMemoryProposalMutation.isPending ||
                   approveMemoryProposalMutation.isPending ||
                   rejectMemoryProposalMutation.isPending
                 }
@@ -470,6 +660,10 @@ function TaskWorkbench(props: {
   onCancel: (task: AgentRuntimeTask) => void
   onApprove: (task: AgentRuntimeTask) => void
   onReject: (task: AgentRuntimeTask) => void
+  reviewActor: string
+  setReviewActor: (value: string) => void
+  reviewNote: string
+  setReviewNote: (value: string) => void
   onProposeShared: (task: AgentRuntimeTask) => void
   onProposeTeammate: (task: AgentRuntimeTask) => void
   busy: boolean
@@ -588,6 +782,41 @@ function TaskWorkbench(props: {
                     <p className="text-sm whitespace-pre-wrap">{selectedTask.task}</p>
 
                     <div className="flex flex-wrap gap-2">
+                      {selectedTask.approvable || selectedTask.rejectable ? (
+                        <div className="w-full space-y-3 rounded-xl border p-3">
+                          <div className="grid gap-3 md:grid-cols-2">
+                            <div className="space-y-2">
+                              <div className="text-xs uppercase opacity-70">
+                                {props.t("pages.agent.teammates.review_fields.actor")}
+                              </div>
+                              <Input
+                                value={props.reviewActor}
+                                onChange={(event) =>
+                                  props.setReviewActor(event.target.value)
+                                }
+                                placeholder={props.t(
+                                  "pages.agent.teammates.review_fields.actor_placeholder",
+                                )}
+                              />
+                            </div>
+                            <div className="space-y-2 md:col-span-2">
+                              <div className="text-xs uppercase opacity-70">
+                                {props.t("pages.agent.teammates.review_fields.note")}
+                              </div>
+                              <Textarea
+                                value={props.reviewNote}
+                                onChange={(event) =>
+                                  props.setReviewNote(event.target.value)
+                                }
+                                placeholder={props.t(
+                                  "pages.agent.teammates.review_fields.note_placeholder",
+                                )}
+                                className="min-h-24"
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      ) : null}
                       {selectedTask.approvable ? (
                         <Button
                           size="sm"
@@ -745,6 +974,13 @@ function MemoryReviewSection(props: {
   selectedProposalKey: string
   setSelectedProposalKey: (value: string) => void
   selectedProposal: AgentRuntimeMemoryProposal | null
+  editor: { actor: string; note: string; scope: string; title: string; content: string }
+  setEditorActor: (value: string) => void
+  setEditorNote: (value: string) => void
+  setEditorScope: (value: string) => void
+  setEditorTitle: (value: string) => void
+  setEditorContent: (value: string) => void
+  onUpdate: (proposal: AgentRuntimeMemoryProposal) => void
   onApprove: (proposal: AgentRuntimeMemoryProposal) => void
   onReject: (proposal: AgentRuntimeMemoryProposal) => void
   busy: boolean
@@ -833,31 +1069,133 @@ function MemoryReviewSection(props: {
                       <Badge variant="secondary">{props.selectedProposal.owner_agent_id}</Badge>
                     </div>
 
-                    {props.selectedProposal.title ? (
-                      <p className="text-base font-medium">{props.selectedProposal.title}</p>
+                    {(props.selectedProposal.status === "pending"
+                      ? props.editor.title.trim()
+                      : props.selectedProposal.title) ? (
+                      <p className="text-base font-medium">
+                        {props.selectedProposal.status === "pending"
+                          ? props.editor.title.trim()
+                          : props.selectedProposal.title}
+                      </p>
                     ) : null}
 
-                    <div className="flex flex-wrap gap-2">
-                      {props.selectedProposal.approvable ? (
-                        <Button
-                          size="sm"
-                          disabled={props.busy}
-                          onClick={() => props.onApprove(props.selectedProposal!)}
-                        >
-                          {props.t("pages.agent.teammates.memory_actions.approve")}
-                        </Button>
-                      ) : null}
-                      {props.selectedProposal.rejectable ? (
-                        <Button
-                          variant="destructive"
-                          size="sm"
-                          disabled={props.busy}
-                          onClick={() => props.onReject(props.selectedProposal!)}
-                        >
-                          {props.t("pages.agent.teammates.memory_actions.reject")}
-                        </Button>
-                      ) : null}
-                    </div>
+                    {props.selectedProposal.status === "pending" ? (
+                      <div className="space-y-4 rounded-xl border p-3">
+                        <div className="grid gap-3 md:grid-cols-2">
+                          <div className="space-y-2">
+                            <div className="text-xs uppercase opacity-70">
+                              {props.t("pages.agent.teammates.memory_fields.scope")}
+                            </div>
+                            <Input
+                              value={props.editor.scope}
+                              onChange={(event) => props.setEditorScope(event.target.value)}
+                              placeholder="shared"
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <div className="text-xs uppercase opacity-70">
+                              {props.t("pages.agent.teammates.memory_fields.title")}
+                            </div>
+                            <Input
+                              value={props.editor.title}
+                              onChange={(event) => props.setEditorTitle(event.target.value)}
+                              placeholder={props.t(
+                                "pages.agent.teammates.memory_fields.title_placeholder",
+                              )}
+                            />
+                          </div>
+                          <div className="space-y-2 md:col-span-2">
+                            <div className="text-xs uppercase opacity-70">
+                              {props.t("pages.agent.teammates.memory_fields.content")}
+                            </div>
+                            <Textarea
+                              value={props.editor.content}
+                              onChange={(event) =>
+                                props.setEditorContent(event.target.value)
+                              }
+                              className="min-h-32"
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <div className="text-xs uppercase opacity-70">
+                              {props.t("pages.agent.teammates.review_fields.actor")}
+                            </div>
+                            <Input
+                              value={props.editor.actor}
+                              onChange={(event) => props.setEditorActor(event.target.value)}
+                              placeholder={props.t(
+                                "pages.agent.teammates.review_fields.actor_placeholder",
+                              )}
+                            />
+                          </div>
+                          <div className="space-y-2 md:col-span-2">
+                            <div className="text-xs uppercase opacity-70">
+                              {props.t("pages.agent.teammates.review_fields.note")}
+                            </div>
+                            <Textarea
+                              value={props.editor.note}
+                              onChange={(event) => props.setEditorNote(event.target.value)}
+                              placeholder={props.t(
+                                "pages.agent.teammates.review_fields.note_placeholder",
+                              )}
+                              className="min-h-24"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="flex flex-wrap gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled={props.busy || !isProposalEditorDirty(props.selectedProposal, props.editor)}
+                            onClick={() => props.onUpdate(props.selectedProposal!)}
+                          >
+                            {props.t("pages.agent.teammates.memory_actions.save")}
+                          </Button>
+                          {props.selectedProposal.approvable ? (
+                            <Button
+                              size="sm"
+                              disabled={props.busy}
+                              onClick={() => props.onApprove(props.selectedProposal!)}
+                            >
+                              {props.t("pages.agent.teammates.memory_actions.approve")}
+                            </Button>
+                          ) : null}
+                          {props.selectedProposal.rejectable ? (
+                            <Button
+                              variant="destructive"
+                              size="sm"
+                              disabled={props.busy}
+                              onClick={() => props.onReject(props.selectedProposal!)}
+                            >
+                              {props.t("pages.agent.teammates.memory_actions.reject")}
+                            </Button>
+                          ) : null}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex flex-wrap gap-2">
+                        {props.selectedProposal.approvable ? (
+                          <Button
+                            size="sm"
+                            disabled={props.busy}
+                            onClick={() => props.onApprove(props.selectedProposal!)}
+                          >
+                            {props.t("pages.agent.teammates.memory_actions.approve")}
+                          </Button>
+                        ) : null}
+                        {props.selectedProposal.rejectable ? (
+                          <Button
+                            variant="destructive"
+                            size="sm"
+                            disabled={props.busy}
+                            onClick={() => props.onReject(props.selectedProposal!)}
+                          >
+                            {props.t("pages.agent.teammates.memory_actions.reject")}
+                          </Button>
+                        ) : null}
+                      </div>
+                    )}
 
                     <dl className="text-muted-foreground grid gap-3 text-sm sm:grid-cols-2">
                       <RuntimeField
@@ -889,22 +1227,35 @@ function MemoryReviewSection(props: {
                         value={formatTimestamp(props.selectedProposal.created)}
                       />
                       <RuntimeField
+                        label={props.t("pages.agent.teammates.memory_fields.updated")}
+                        value={formatReviewed(
+                          props.selectedProposal.updated_by,
+                          props.selectedProposal.updated_at,
+                        )}
+                      />
+                      <RuntimeField
                         label={props.t("pages.agent.teammates.memory_fields.reviewed")}
                         value={formatReviewed(
                           props.selectedProposal.reviewed_by,
                           props.selectedProposal.reviewed_at,
                         )}
                       />
+                      <RuntimeField
+                        label={props.t("pages.agent.teammates.memory_fields.review_note")}
+                        value={props.selectedProposal.review_note}
+                      />
                     </dl>
 
-                    <div className="space-y-2">
-                      <div className="text-xs uppercase opacity-70">
-                        {props.t("pages.agent.teammates.memory_fields.content")}
+                    {props.selectedProposal.status !== "pending" ? (
+                      <div className="space-y-2">
+                        <div className="text-xs uppercase opacity-70">
+                          {props.t("pages.agent.teammates.memory_fields.content")}
+                        </div>
+                        <pre className="bg-background overflow-x-auto rounded-xl border p-3 text-xs whitespace-pre-wrap">
+                          {props.selectedProposal.content}
+                        </pre>
                       </div>
-                      <pre className="bg-background overflow-x-auto rounded-xl border p-3 text-xs whitespace-pre-wrap">
-                        {props.selectedProposal.content}
-                      </pre>
-                    </div>
+                    ) : null}
                   </>
                 )}
               </CardContent>
@@ -1078,4 +1429,15 @@ function canPromoteTaskToMemory(task: AgentRuntimeTask) {
     default:
       return false
   }
+}
+
+function isProposalEditorDirty(
+  proposal: AgentRuntimeMemoryProposal,
+  editor: { scope: string; title: string; content: string },
+) {
+  return (
+    editor.scope.trim() !== proposal.scope ||
+    editor.title.trim() !== (proposal.title ?? "") ||
+    editor.content.trim() !== proposal.content.trim()
+  )
 }

@@ -36,6 +36,7 @@ func (h *Handler) registerAgentRuntimeRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/agent/runtime/tasks/{ownerAgentID}/{taskID}/approve", h.handleApproveAgentRuntimeTask)
 	mux.HandleFunc("POST /api/agent/runtime/tasks/{ownerAgentID}/{taskID}/reject", h.handleRejectAgentRuntimeTask)
 	mux.HandleFunc("POST /api/agent/runtime/tasks/{ownerAgentID}/{taskID}/memory-proposals", h.handleCreateAgentRuntimeMemoryProposal)
+	mux.HandleFunc("POST /api/agent/runtime/memory-proposals/{ownerAgentID}/{proposalID}/update", h.handleUpdateAgentRuntimeMemoryProposal)
 	mux.HandleFunc("POST /api/agent/runtime/memory-proposals/{ownerAgentID}/{proposalID}/approve", h.handleApproveAgentRuntimeMemoryProposal)
 	mux.HandleFunc("POST /api/agent/runtime/memory-proposals/{ownerAgentID}/{proposalID}/reject", h.handleRejectAgentRuntimeMemoryProposal)
 }
@@ -88,8 +89,16 @@ func (h *Handler) handleCancelAgentRuntimeTask(w http.ResponseWriter, r *http.Re
 func (h *Handler) handleApproveAgentRuntimeTask(w http.ResponseWriter, r *http.Request) {
 	ownerAgentID := r.PathValue("ownerAgentID")
 	taskID := r.PathValue("taskID")
+	var req struct {
+		Actor string `json:"actor"`
+		Note  string `json:"note"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
 
-	task, statusCode, err := h.approveGatewayRuntimeTask(ownerAgentID, taskID, gatewayRuntimeRequestTimeout)
+	task, statusCode, err := h.approveGatewayRuntimeTask(ownerAgentID, taskID, req.Actor, req.Note, gatewayRuntimeRequestTimeout)
 	if err != nil {
 		http.Error(w, err.Error(), statusCode)
 		return
@@ -104,8 +113,16 @@ func (h *Handler) handleApproveAgentRuntimeTask(w http.ResponseWriter, r *http.R
 func (h *Handler) handleRejectAgentRuntimeTask(w http.ResponseWriter, r *http.Request) {
 	ownerAgentID := r.PathValue("ownerAgentID")
 	taskID := r.PathValue("taskID")
+	var req struct {
+		Actor string `json:"actor"`
+		Note  string `json:"note"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
 
-	task, statusCode, err := h.rejectGatewayRuntimeTask(ownerAgentID, taskID, gatewayRuntimeRequestTimeout)
+	task, statusCode, err := h.rejectGatewayRuntimeTask(ownerAgentID, taskID, req.Actor, req.Note, gatewayRuntimeRequestTimeout)
 	if err != nil {
 		http.Error(w, err.Error(), statusCode)
 		return
@@ -143,8 +160,16 @@ func (h *Handler) handleCreateAgentRuntimeMemoryProposal(w http.ResponseWriter, 
 func (h *Handler) handleApproveAgentRuntimeMemoryProposal(w http.ResponseWriter, r *http.Request) {
 	ownerAgentID := r.PathValue("ownerAgentID")
 	proposalID := r.PathValue("proposalID")
+	var req struct {
+		Actor string `json:"actor"`
+		Note  string `json:"note"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
 
-	proposal, statusCode, err := h.approveGatewayRuntimeMemoryProposal(ownerAgentID, proposalID, gatewayRuntimeRequestTimeout)
+	proposal, statusCode, err := h.approveGatewayRuntimeMemoryProposal(ownerAgentID, proposalID, req.Actor, req.Note, gatewayRuntimeRequestTimeout)
 	if err != nil {
 		http.Error(w, err.Error(), statusCode)
 		return
@@ -159,8 +184,50 @@ func (h *Handler) handleApproveAgentRuntimeMemoryProposal(w http.ResponseWriter,
 func (h *Handler) handleRejectAgentRuntimeMemoryProposal(w http.ResponseWriter, r *http.Request) {
 	ownerAgentID := r.PathValue("ownerAgentID")
 	proposalID := r.PathValue("proposalID")
+	var req struct {
+		Actor string `json:"actor"`
+		Note  string `json:"note"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
 
-	proposal, statusCode, err := h.rejectGatewayRuntimeMemoryProposal(ownerAgentID, proposalID, gatewayRuntimeRequestTimeout)
+	proposal, statusCode, err := h.rejectGatewayRuntimeMemoryProposal(ownerAgentID, proposalID, req.Actor, req.Note, gatewayRuntimeRequestTimeout)
+	if err != nil {
+		http.Error(w, err.Error(), statusCode)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(proposal); err != nil {
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+	}
+}
+
+func (h *Handler) handleUpdateAgentRuntimeMemoryProposal(w http.ResponseWriter, r *http.Request) {
+	ownerAgentID := r.PathValue("ownerAgentID")
+	proposalID := r.PathValue("proposalID")
+	var req struct {
+		Actor   string `json:"actor"`
+		Scope   string `json:"scope"`
+		Title   string `json:"title"`
+		Content string `json:"content"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	proposal, statusCode, err := h.updateGatewayRuntimeMemoryProposal(
+		ownerAgentID,
+		proposalID,
+		req.Actor,
+		req.Scope,
+		req.Title,
+		req.Content,
+		gatewayRuntimeRequestTimeout,
+	)
 	if err != nil {
 		http.Error(w, err.Error(), statusCode)
 		return
@@ -224,11 +291,19 @@ func (h *Handler) cancelGatewayRuntimeTask(ownerAgentID, taskID string, timeout 
 	return &task, http.StatusOK, nil
 }
 
-func (h *Handler) approveGatewayRuntimeTask(ownerAgentID, taskID string, timeout time.Duration) (*agent.RuntimeTaskInfo, int, error) {
+func (h *Handler) approveGatewayRuntimeTask(ownerAgentID, taskID, actor, note string, timeout time.Duration) (*agent.RuntimeTaskInfo, int, error) {
+	var body io.Reader
+	if strings.TrimSpace(actor) != "" || strings.TrimSpace(note) != "" {
+		payload, err := json.Marshal(map[string]string{"actor": actor, "note": note})
+		if err != nil {
+			return nil, http.StatusInternalServerError, err
+		}
+		body = bytes.NewReader(payload)
+	}
 	resp, statusCode, err := h.doGatewayRuntimeRequest(
 		http.MethodPost,
 		"/runtime/agent/tasks/"+url.PathEscape(ownerAgentID)+"/"+url.PathEscape(taskID)+"/approve",
-		nil,
+		body,
 		timeout,
 	)
 	if err != nil {
@@ -243,11 +318,19 @@ func (h *Handler) approveGatewayRuntimeTask(ownerAgentID, taskID string, timeout
 	return &task, http.StatusOK, nil
 }
 
-func (h *Handler) rejectGatewayRuntimeTask(ownerAgentID, taskID string, timeout time.Duration) (*agent.RuntimeTaskInfo, int, error) {
+func (h *Handler) rejectGatewayRuntimeTask(ownerAgentID, taskID, actor, note string, timeout time.Duration) (*agent.RuntimeTaskInfo, int, error) {
+	var body io.Reader
+	if strings.TrimSpace(actor) != "" || strings.TrimSpace(note) != "" {
+		payload, err := json.Marshal(map[string]string{"actor": actor, "note": note})
+		if err != nil {
+			return nil, http.StatusInternalServerError, err
+		}
+		body = bytes.NewReader(payload)
+	}
 	resp, statusCode, err := h.doGatewayRuntimeRequest(
 		http.MethodPost,
 		"/runtime/agent/tasks/"+url.PathEscape(ownerAgentID)+"/"+url.PathEscape(taskID)+"/reject",
-		nil,
+		body,
 		timeout,
 	)
 	if err != nil {
@@ -289,11 +372,20 @@ func (h *Handler) createGatewayRuntimeMemoryProposal(ownerAgentID, taskID, scope
 	return &proposal, http.StatusOK, nil
 }
 
-func (h *Handler) approveGatewayRuntimeMemoryProposal(ownerAgentID, proposalID string, timeout time.Duration) (*agent.RuntimeMemoryProposalInfo, int, error) {
+func (h *Handler) updateGatewayRuntimeMemoryProposal(ownerAgentID, proposalID, actor, scope, title, content string, timeout time.Duration) (*agent.RuntimeMemoryProposalInfo, int, error) {
+	payload, err := json.Marshal(map[string]string{
+		"actor":   actor,
+		"scope":   scope,
+		"title":   title,
+		"content": content,
+	})
+	if err != nil {
+		return nil, http.StatusInternalServerError, err
+	}
 	resp, statusCode, err := h.doGatewayRuntimeRequest(
 		http.MethodPost,
-		"/runtime/agent/memory-proposals/"+url.PathEscape(ownerAgentID)+"/"+url.PathEscape(proposalID)+"/approve",
-		nil,
+		"/runtime/agent/memory-proposals/"+url.PathEscape(ownerAgentID)+"/"+url.PathEscape(proposalID)+"/update",
+		bytes.NewReader(payload),
 		timeout,
 	)
 	if err != nil {
@@ -308,11 +400,46 @@ func (h *Handler) approveGatewayRuntimeMemoryProposal(ownerAgentID, proposalID s
 	return &proposal, http.StatusOK, nil
 }
 
-func (h *Handler) rejectGatewayRuntimeMemoryProposal(ownerAgentID, proposalID string, timeout time.Duration) (*agent.RuntimeMemoryProposalInfo, int, error) {
+func (h *Handler) approveGatewayRuntimeMemoryProposal(ownerAgentID, proposalID, actor, note string, timeout time.Duration) (*agent.RuntimeMemoryProposalInfo, int, error) {
+	var body io.Reader
+	if strings.TrimSpace(actor) != "" || strings.TrimSpace(note) != "" {
+		payload, err := json.Marshal(map[string]string{"actor": actor, "note": note})
+		if err != nil {
+			return nil, http.StatusInternalServerError, err
+		}
+		body = bytes.NewReader(payload)
+	}
+	resp, statusCode, err := h.doGatewayRuntimeRequest(
+		http.MethodPost,
+		"/runtime/agent/memory-proposals/"+url.PathEscape(ownerAgentID)+"/"+url.PathEscape(proposalID)+"/approve",
+		body,
+		timeout,
+	)
+	if err != nil {
+		return nil, statusCode, err
+	}
+	defer resp.Body.Close()
+
+	var proposal agent.RuntimeMemoryProposalInfo
+	if err := json.NewDecoder(resp.Body).Decode(&proposal); err != nil {
+		return nil, http.StatusBadGateway, err
+	}
+	return &proposal, http.StatusOK, nil
+}
+
+func (h *Handler) rejectGatewayRuntimeMemoryProposal(ownerAgentID, proposalID, actor, note string, timeout time.Duration) (*agent.RuntimeMemoryProposalInfo, int, error) {
+	var body io.Reader
+	if strings.TrimSpace(actor) != "" || strings.TrimSpace(note) != "" {
+		payload, err := json.Marshal(map[string]string{"actor": actor, "note": note})
+		if err != nil {
+			return nil, http.StatusInternalServerError, err
+		}
+		body = bytes.NewReader(payload)
+	}
 	resp, statusCode, err := h.doGatewayRuntimeRequest(
 		http.MethodPost,
 		"/runtime/agent/memory-proposals/"+url.PathEscape(ownerAgentID)+"/"+url.PathEscape(proposalID)+"/reject",
-		nil,
+		body,
 		timeout,
 	)
 	if err != nil {

@@ -19,6 +19,18 @@ type runtimeTaskMemoryProposalRequest struct {
 	Scope string `json:"scope"`
 }
 
+type runtimeReviewActionRequest struct {
+	Actor string `json:"actor"`
+	Note  string `json:"note"`
+}
+
+type runtimeMemoryProposalUpdateRequest struct {
+	Actor   string `json:"actor"`
+	Scope   string `json:"scope"`
+	Title   string `json:"title"`
+	Content string `json:"content"`
+}
+
 func registerRuntimeHTTPHandlers(agentLoop *agent.AgentLoop, channelManager httpHandlerRegistrar, authToken string) {
 	if agentLoop == nil || channelManager == nil {
 		return
@@ -71,7 +83,12 @@ func registerRuntimeHTTPHandlers(agentLoop *agent.AgentLoop, channelManager http
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(task)
 		case r.Method == http.MethodPost && action == "approve":
-			task, err := agentLoop.ApproveRuntimeTask(ownerAgentID, taskID, "launcher", "")
+			var req runtimeReviewActionRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+				writeGatewayRuntimeError(w, http.StatusBadRequest, "invalid request body")
+				return
+			}
+			task, err := agentLoop.ApproveRuntimeTask(ownerAgentID, taskID, req.Actor, req.Note)
 			if err != nil {
 				writeGatewayRuntimeTaskError(w, err)
 				return
@@ -79,7 +96,12 @@ func registerRuntimeHTTPHandlers(agentLoop *agent.AgentLoop, channelManager http
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(task)
 		case r.Method == http.MethodPost && action == "reject":
-			task, err := agentLoop.RejectRuntimeTask(ownerAgentID, taskID, "launcher", "")
+			var req runtimeReviewActionRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+				writeGatewayRuntimeError(w, http.StatusBadRequest, "invalid request body")
+				return
+			}
+			task, err := agentLoop.RejectRuntimeTask(ownerAgentID, taskID, req.Actor, req.Note)
 			if err != nil {
 				writeGatewayRuntimeTaskError(w, err)
 				return
@@ -119,8 +141,30 @@ func registerRuntimeHTTPHandlers(agentLoop *agent.AgentLoop, channelManager http
 		}
 
 		switch {
+		case r.Method == http.MethodPost && action == "update":
+			var req runtimeMemoryProposalUpdateRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+				writeGatewayRuntimeError(w, http.StatusBadRequest, "invalid request body")
+				return
+			}
+			proposal, err := agentLoop.UpdateRuntimeMemoryProposal(ownerAgentID, proposalID, req.Actor, agent.MemoryProposalUpdate{
+				Scope:   req.Scope,
+				Title:   req.Title,
+				Content: req.Content,
+			})
+			if err != nil {
+				writeGatewayRuntimeTaskError(w, err)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(proposal)
 		case r.Method == http.MethodPost && action == "approve":
-			proposal, err := agentLoop.ApproveRuntimeMemoryProposal(ownerAgentID, proposalID, "launcher", "")
+			var req runtimeReviewActionRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+				writeGatewayRuntimeError(w, http.StatusBadRequest, "invalid request body")
+				return
+			}
+			proposal, err := agentLoop.ApproveRuntimeMemoryProposal(ownerAgentID, proposalID, req.Actor, req.Note)
 			if err != nil {
 				writeGatewayRuntimeTaskError(w, err)
 				return
@@ -128,7 +172,12 @@ func registerRuntimeHTTPHandlers(agentLoop *agent.AgentLoop, channelManager http
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(proposal)
 		case r.Method == http.MethodPost && action == "reject":
-			proposal, err := agentLoop.RejectRuntimeMemoryProposal(ownerAgentID, proposalID, "launcher", "")
+			var req runtimeReviewActionRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+				writeGatewayRuntimeError(w, http.StatusBadRequest, "invalid request body")
+				return
+			}
+			proposal, err := agentLoop.RejectRuntimeMemoryProposal(ownerAgentID, proposalID, req.Actor, req.Note)
 			if err != nil {
 				writeGatewayRuntimeTaskError(w, err)
 				return
