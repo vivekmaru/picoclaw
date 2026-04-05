@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,11 @@ import (
 	"time"
 
 	"github.com/sipeed/picoclaw/pkg/fileutil"
+)
+
+var (
+	errMemoryProposalNotPending = errors.New("memory proposal not pending")
+	errMemoryProposalInvalid    = errors.New("invalid memory proposal")
 )
 
 type MemoryProposal struct {
@@ -176,7 +182,7 @@ func (s *MemoryProposalStore) Approve(id, actor, note string) (MemoryProposal, e
 		return MemoryProposal{}, fmt.Errorf("memory proposal %q not found", id)
 	}
 	if proposal.Status != "pending" {
-		return MemoryProposal{}, fmt.Errorf("memory proposal %q is not pending", id)
+		return MemoryProposal{}, fmt.Errorf("%w: memory proposal %q is not pending", errMemoryProposalNotPending, id)
 	}
 
 	mem := NewMemoryStoreForScope(s.workspace, proposal.Scope)
@@ -203,16 +209,16 @@ func (s *MemoryProposalStore) Update(id, actor string, update MemoryProposalUpda
 		return MemoryProposal{}, fmt.Errorf("memory proposal %q not found", id)
 	}
 	if proposal.Status != "pending" {
-		return MemoryProposal{}, fmt.Errorf("memory proposal %q is not pending", id)
+		return MemoryProposal{}, fmt.Errorf("%w: memory proposal %q is not pending", errMemoryProposalNotPending, id)
 	}
 
 	scope := strings.TrimSpace(update.Scope)
 	if scope == "" {
-		return MemoryProposal{}, fmt.Errorf("memory proposal scope is required")
+		return MemoryProposal{}, fmt.Errorf("%w: memory proposal scope is required", errMemoryProposalInvalid)
 	}
 	content := strings.TrimSpace(update.Content)
 	if content == "" {
-		return MemoryProposal{}, fmt.Errorf("memory proposal content is required")
+		return MemoryProposal{}, fmt.Errorf("%w: memory proposal content is required", errMemoryProposalInvalid)
 	}
 
 	proposal.Scope = scope
@@ -235,7 +241,7 @@ func (s *MemoryProposalStore) Reject(id, actor, note string) (MemoryProposal, er
 		return MemoryProposal{}, fmt.Errorf("memory proposal %q not found", id)
 	}
 	if proposal.Status != "pending" {
-		return MemoryProposal{}, fmt.Errorf("memory proposal %q is not pending", id)
+		return MemoryProposal{}, fmt.Errorf("%w: memory proposal %q is not pending", errMemoryProposalNotPending, id)
 	}
 
 	proposal.Status = "rejected"

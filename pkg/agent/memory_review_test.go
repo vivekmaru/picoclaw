@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -103,5 +104,27 @@ func TestMemoryProposalStore_UpdatePendingProposal(t *testing.T) {
 	}
 	if updated.UpdatedAt == 0 {
 		t.Fatal("updated.UpdatedAt should be set")
+	}
+}
+
+func TestMemoryProposalStore_UpdatePendingProposalRejectsBlankContent(t *testing.T) {
+	workspace := t.TempDir()
+	store := NewMemoryProposalStore(workspace)
+
+	proposal, err := store.Create(MemoryProposalRequest{
+		Scope:   "shared",
+		Target:  "long_term",
+		Content: "Original content",
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	_, err = store.Update(proposal.ID, "operator", MemoryProposalUpdate{
+		Scope:   "shared",
+		Content: "   ",
+	})
+	if !errors.Is(err, errMemoryProposalInvalid) {
+		t.Fatalf("Update() error = %v, want errMemoryProposalInvalid", err)
 	}
 }

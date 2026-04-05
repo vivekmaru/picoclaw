@@ -366,9 +366,20 @@ export function TeammatesPage() {
         }),
       )
       setProposalEditors((current) => {
-        const next = { ...current }
-        delete next[proposalKey(proposal)]
-        return next
+        const existing = current[proposalKey(proposal)]
+        if (!existing) {
+          return current
+        }
+        return {
+          ...current,
+          [proposalKey(proposal)]: {
+            actor: existing.actor,
+            note: existing.note,
+            scope: proposal.scope,
+            title: proposal.title ?? "",
+            content: proposal.content,
+          },
+        }
       })
       invalidateRuntime()
     },

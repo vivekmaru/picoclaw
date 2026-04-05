@@ -12,6 +12,7 @@ var (
 	ErrRuntimeTaskNotAwaitingApproval  = errors.New("runtime task not awaiting approval")
 	ErrRuntimeMemoryProposalNotFound   = errors.New("runtime memory proposal not found")
 	ErrRuntimeMemoryProposalNotPending = errors.New("runtime memory proposal not pending")
+	ErrRuntimeMemoryProposalInvalid    = errors.New("runtime memory proposal invalid")
 )
 
 func (al *AgentLoop) GetRuntimeTask(ownerAgentID, taskID string) (RuntimeTaskInfo, error) {
@@ -149,7 +150,13 @@ func (al *AgentLoop) UpdateRuntimeMemoryProposal(
 		if _, ok := store.GetCopy(proposalID); !ok {
 			return RuntimeMemoryProposalInfo{}, fmt.Errorf("%w: %s", ErrRuntimeMemoryProposalNotFound, proposalID)
 		}
-		return RuntimeMemoryProposalInfo{}, fmt.Errorf("%w: %v", ErrRuntimeMemoryProposalNotPending, err)
+		if errors.Is(err, errMemoryProposalNotPending) {
+			return RuntimeMemoryProposalInfo{}, fmt.Errorf("%w: %v", ErrRuntimeMemoryProposalNotPending, err)
+		}
+		if errors.Is(err, errMemoryProposalInvalid) {
+			return RuntimeMemoryProposalInfo{}, fmt.Errorf("%w: %v", ErrRuntimeMemoryProposalInvalid, err)
+		}
+		return RuntimeMemoryProposalInfo{}, err
 	}
 	return runtimeMemoryProposalInfo(ownerAgentID, proposal), nil
 }
@@ -165,7 +172,10 @@ func (al *AgentLoop) ApproveRuntimeMemoryProposal(ownerAgentID, proposalID, acto
 		if _, ok := store.GetCopy(proposalID); !ok {
 			return RuntimeMemoryProposalInfo{}, fmt.Errorf("%w: %s", ErrRuntimeMemoryProposalNotFound, proposalID)
 		}
-		return RuntimeMemoryProposalInfo{}, fmt.Errorf("%w: %v", ErrRuntimeMemoryProposalNotPending, err)
+		if errors.Is(err, errMemoryProposalNotPending) {
+			return RuntimeMemoryProposalInfo{}, fmt.Errorf("%w: %v", ErrRuntimeMemoryProposalNotPending, err)
+		}
+		return RuntimeMemoryProposalInfo{}, err
 	}
 	return runtimeMemoryProposalInfo(ownerAgentID, proposal), nil
 }
@@ -181,7 +191,10 @@ func (al *AgentLoop) RejectRuntimeMemoryProposal(ownerAgentID, proposalID, actor
 		if _, ok := store.GetCopy(proposalID); !ok {
 			return RuntimeMemoryProposalInfo{}, fmt.Errorf("%w: %s", ErrRuntimeMemoryProposalNotFound, proposalID)
 		}
-		return RuntimeMemoryProposalInfo{}, fmt.Errorf("%w: %v", ErrRuntimeMemoryProposalNotPending, err)
+		if errors.Is(err, errMemoryProposalNotPending) {
+			return RuntimeMemoryProposalInfo{}, fmt.Errorf("%w: %v", ErrRuntimeMemoryProposalNotPending, err)
+		}
+		return RuntimeMemoryProposalInfo{}, err
 	}
 	return runtimeMemoryProposalInfo(ownerAgentID, proposal), nil
 }

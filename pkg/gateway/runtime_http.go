@@ -253,6 +253,8 @@ func writeGatewayRuntimeTaskError(w http.ResponseWriter, err error) {
 		writeGatewayRuntimeError(w, http.StatusNotFound, err.Error())
 	case errors.Is(err, agent.ErrRuntimeMemoryProposalNotPending):
 		writeGatewayRuntimeError(w, http.StatusConflict, err.Error())
+	case errors.Is(err, agent.ErrRuntimeMemoryProposalInvalid):
+		writeGatewayRuntimeError(w, http.StatusBadRequest, err.Error())
 	default:
 		writeGatewayRuntimeError(w, http.StatusInternalServerError, err.Error())
 	}
