@@ -9,18 +9,21 @@ import (
 )
 
 type RuntimeSnapshot struct {
-	GeneratedAt int64                  `json:"generated_at"`
-	Summary     RuntimeSnapshotSummary `json:"summary"`
-	Agents      []RuntimeAgentInfo     `json:"agents"`
-	Teammates   []RuntimeTeammateInfo  `json:"teammates"`
-	Tasks       []RuntimeTaskInfo      `json:"tasks"`
+	GeneratedAt     int64                       `json:"generated_at"`
+	Summary         RuntimeSnapshotSummary      `json:"summary"`
+	Agents          []RuntimeAgentInfo          `json:"agents"`
+	Teammates       []RuntimeTeammateInfo       `json:"teammates"`
+	Tasks           []RuntimeTaskInfo           `json:"tasks"`
+	MemoryProposals []RuntimeMemoryProposalInfo `json:"memory_proposals,omitempty"`
 }
 
 type RuntimeSnapshotSummary struct {
-	AgentCount    int            `json:"agent_count"`
-	TeammateCount int            `json:"teammate_count"`
-	TaskCount     int            `json:"task_count"`
-	TaskStatuses  map[string]int `json:"task_statuses,omitempty"`
+	AgentCount           int            `json:"agent_count"`
+	TeammateCount        int            `json:"teammate_count"`
+	TaskCount            int            `json:"task_count"`
+	TaskStatuses         map[string]int `json:"task_statuses,omitempty"`
+	MemoryProposalCount  int            `json:"memory_proposal_count"`
+	MemoryProposalStatus map[string]int `json:"memory_proposal_statuses,omitempty"`
 }
 
 type RuntimeAgentInfo struct {
@@ -45,7 +48,16 @@ type RuntimeTeammateInfo struct {
 type RuntimeTaskInfo struct {
 	OwnerAgentID string `json:"owner_agent_id"`
 	Cancelable   bool   `json:"cancelable,omitempty"`
+	Approvable   bool   `json:"approvable,omitempty"`
+	Rejectable   bool   `json:"rejectable,omitempty"`
 	tools.SubagentTask
+}
+
+type RuntimeMemoryProposalInfo struct {
+	OwnerAgentID string `json:"owner_agent_id"`
+	Approvable   bool   `json:"approvable,omitempty"`
+	Rejectable   bool   `json:"rejectable,omitempty"`
+	MemoryProposal
 }
 
 type subagentManagerProvider interface {
@@ -56,7 +68,8 @@ func (al *AgentLoop) GetRuntimeSnapshot() RuntimeSnapshot {
 	snapshot := RuntimeSnapshot{
 		GeneratedAt: time.Now().UnixMilli(),
 		Summary: RuntimeSnapshotSummary{
-			TaskStatuses: map[string]int{},
+			TaskStatuses:         map[string]int{},
+			MemoryProposalStatus: map[string]int{},
 		},
 	}
 
@@ -106,11 +119,24 @@ func (al *AgentLoop) GetRuntimeSnapshot() RuntimeSnapshot {
 		snapshot.Summary.TaskStatuses[status]++
 	}
 
+	snapshot.MemoryProposals = collectRuntimeMemoryProposals(registry, agentIDs)
+	for _, proposal := range snapshot.MemoryProposals {
+		status := strings.TrimSpace(proposal.Status)
+		if status == "" {
+			status = "unknown"
+		}
+		snapshot.Summary.MemoryProposalStatus[status]++
+	}
+
 	snapshot.Summary.AgentCount = len(snapshot.Agents)
 	snapshot.Summary.TeammateCount = len(snapshot.Teammates)
 	snapshot.Summary.TaskCount = len(snapshot.Tasks)
+	snapshot.Summary.MemoryProposalCount = len(snapshot.MemoryProposals)
 	if len(snapshot.Summary.TaskStatuses) == 0 {
 		snapshot.Summary.TaskStatuses = nil
+	}
+	if len(snapshot.Summary.MemoryProposalStatus) == 0 {
+		snapshot.Summary.MemoryProposalStatus = nil
 	}
 
 	return snapshot
@@ -176,16 +202,71 @@ func runtimeTaskInfo(ownerAgentID string, task tools.SubagentTask) RuntimeTaskIn
 	return RuntimeTaskInfo{
 		OwnerAgentID: ownerAgentID,
 		Cancelable:   runtimeTaskCancelable(task),
+		Approvable:   runtimeTaskApprovable(task),
+		Rejectable:   runtimeTaskRejectable(task),
 		SubagentTask: task,
 	}
 }
 
 func runtimeTaskCancelable(task tools.SubagentTask) bool {
 	switch strings.ToLower(strings.TrimSpace(task.Status)) {
-	case "queued", "running":
+	case "awaiting_approval", "queued", "running":
 		return true
 	default:
 		return false
+	}
+}
+
+func runtimeTaskApprovable(task tools.SubagentTask) bool {
+	return strings.EqualFold(strings.TrimSpace(task.Status), "awaiting_approval")
+}
+
+func runtimeTaskRejectable(task tools.SubagentTask) bool {
+	return strings.EqualFold(strings.TrimSpace(task.Status), "awaiting_approval")
+}
+
+func collectRuntimeMemoryProposals(registry *AgentRegistry, agentIDs []string) []RuntimeMemoryProposalInfo {
+	proposals := make([]RuntimeMemoryProposalInfo, 0)
+	for _, agentID := range agentIDs {
+		store := runtimeMemoryProposalStoreForAgent(registry, agentID)
+		if store == nil {
+			continue
+		}
+		for _, proposal := range store.ListCopies() {
+			proposals = append(proposals, runtimeMemoryProposalInfo(agentID, proposal))
+		}
+	}
+	slices.SortFunc(proposals, func(a, b RuntimeMemoryProposalInfo) int {
+		if a.Created != b.Created {
+			if a.Created < b.Created {
+				return -1
+			}
+			return 1
+		}
+		if a.OwnerAgentID != b.OwnerAgentID {
+			if a.OwnerAgentID < b.OwnerAgentID {
+				return -1
+			}
+			return 1
+		}
+		switch {
+		case a.ID < b.ID:
+			return -1
+		case a.ID > b.ID:
+			return 1
+		default:
+			return 0
+		}
+	})
+	return proposals
+}
+
+func runtimeMemoryProposalInfo(ownerAgentID string, proposal MemoryProposal) RuntimeMemoryProposalInfo {
+	return RuntimeMemoryProposalInfo{
+		OwnerAgentID:   ownerAgentID,
+		Approvable:     strings.EqualFold(strings.TrimSpace(proposal.Status), "pending"),
+		Rejectable:     strings.EqualFold(strings.TrimSpace(proposal.Status), "pending"),
+		MemoryProposal: proposal,
 	}
 }
 
@@ -209,4 +290,15 @@ func runtimeTaskManagerForAgent(registry *AgentRegistry, agentID string) *tools.
 		}
 	}
 	return nil
+}
+
+func runtimeMemoryProposalStoreForAgent(registry *AgentRegistry, agentID string) *MemoryProposalStore {
+	if registry == nil {
+		return nil
+	}
+	agentInst, ok := registry.GetAgent(agentID)
+	if !ok || agentInst == nil || strings.TrimSpace(agentInst.Workspace) == "" {
+		return nil
+	}
+	return NewMemoryProposalStore(agentInst.Workspace)
 }

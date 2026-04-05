@@ -4,6 +4,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 
@@ -12,6 +13,11 @@ import (
 
 const gatewayRuntimePath = "/runtime/agent"
 const gatewayRuntimeTasksPrefix = "/runtime/agent/tasks/"
+const gatewayRuntimeMemoryProposalsPrefix = "/runtime/agent/memory-proposals/"
+
+type runtimeTaskMemoryProposalRequest struct {
+	Scope string `json:"scope"`
+}
 
 func registerRuntimeHTTPHandlers(agentLoop *agent.AgentLoop, channelManager httpHandlerRegistrar, authToken string) {
 	if agentLoop == nil || channelManager == nil {
@@ -64,8 +70,71 @@ func registerRuntimeHTTPHandlers(agentLoop *agent.AgentLoop, channelManager http
 			}
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(task)
+		case r.Method == http.MethodPost && action == "approve":
+			task, err := agentLoop.ApproveRuntimeTask(ownerAgentID, taskID, "launcher", "")
+			if err != nil {
+				writeGatewayRuntimeTaskError(w, err)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(task)
+		case r.Method == http.MethodPost && action == "reject":
+			task, err := agentLoop.RejectRuntimeTask(ownerAgentID, taskID, "launcher", "")
+			if err != nil {
+				writeGatewayRuntimeTaskError(w, err)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(task)
+		case r.Method == http.MethodPost && action == "memory-proposals":
+			var req runtimeTaskMemoryProposalRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+				writeGatewayRuntimeError(w, http.StatusBadRequest, "invalid request body")
+				return
+			}
+			proposal, err := agentLoop.CreateRuntimeMemoryProposalFromTask(ownerAgentID, taskID, req.Scope)
+			if err != nil {
+				writeGatewayRuntimeTaskError(w, err)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(proposal)
 		case action == "":
 			writeGatewayRuntimeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		default:
+			writeGatewayRuntimeError(w, http.StatusNotFound, "not found")
+		}
+	})
+
+	channelManager.RegisterHTTPHandlerFunc(gatewayRuntimeMemoryProposalsPrefix, func(w http.ResponseWriter, r *http.Request) {
+		if !authorizedGatewayRuntimeRequest(r, authToken) {
+			writeGatewayRuntimeError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+
+		ownerAgentID, proposalID, action, ok := parseGatewayRuntimeMemoryProposalPath(r.URL.Path)
+		if !ok {
+			writeGatewayRuntimeError(w, http.StatusNotFound, "not found")
+			return
+		}
+
+		switch {
+		case r.Method == http.MethodPost && action == "approve":
+			proposal, err := agentLoop.ApproveRuntimeMemoryProposal(ownerAgentID, proposalID, "launcher", "")
+			if err != nil {
+				writeGatewayRuntimeTaskError(w, err)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(proposal)
+		case r.Method == http.MethodPost && action == "reject":
+			proposal, err := agentLoop.RejectRuntimeMemoryProposal(ownerAgentID, proposalID, "launcher", "")
+			if err != nil {
+				writeGatewayRuntimeTaskError(w, err)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(proposal)
 		default:
 			writeGatewayRuntimeError(w, http.StatusNotFound, "not found")
 		}
@@ -111,11 +180,29 @@ func parseGatewayRuntimeTaskPath(path string) (ownerAgentID, taskID, action stri
 	return parts[0], parts[1], "", true
 }
 
+func parseGatewayRuntimeMemoryProposalPath(path string) (ownerAgentID, proposalID, action string, ok bool) {
+	trimmed := strings.TrimPrefix(path, gatewayRuntimeMemoryProposalsPrefix)
+	if trimmed == path {
+		return "", "", "", false
+	}
+	parts := strings.Split(strings.Trim(trimmed, "/"), "/")
+	if len(parts) != 3 || parts[0] == "" || parts[1] == "" || parts[2] == "" {
+		return "", "", "", false
+	}
+	return parts[0], parts[1], parts[2], true
+}
+
 func writeGatewayRuntimeTaskError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, agent.ErrRuntimeTaskNotFound):
 		writeGatewayRuntimeError(w, http.StatusNotFound, err.Error())
 	case errors.Is(err, agent.ErrRuntimeTaskNotCancelable):
+		writeGatewayRuntimeError(w, http.StatusConflict, err.Error())
+	case errors.Is(err, agent.ErrRuntimeTaskNotAwaitingApproval):
+		writeGatewayRuntimeError(w, http.StatusConflict, err.Error())
+	case errors.Is(err, agent.ErrRuntimeMemoryProposalNotFound):
+		writeGatewayRuntimeError(w, http.StatusNotFound, err.Error())
+	case errors.Is(err, agent.ErrRuntimeMemoryProposalNotPending):
 		writeGatewayRuntimeError(w, http.StatusConflict, err.Error())
 	default:
 		writeGatewayRuntimeError(w, http.StatusInternalServerError, err.Error())

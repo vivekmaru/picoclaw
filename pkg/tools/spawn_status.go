@@ -141,7 +141,7 @@ func (t *SpawnStatusTool) Execute(ctx context.Context, args map[string]any) *Too
 
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("Subagent status report (%d total):\n", len(tasks)))
-	for _, status := range []string{"queued", "running", "canceling", "completed", "failed", "canceled"} {
+	for _, status := range []string{"awaiting_approval", "queued", "running", "canceling", "completed", "failed", "canceled", "denied"} {
 		if n := counts[status]; n > 0 {
 			label := strings.ToUpper(status[:1]) + status[1:] + ":"
 			sb.WriteString(fmt.Sprintf("  %-10s %d\n", label, n))

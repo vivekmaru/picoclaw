@@ -186,3 +186,109 @@ func TestAgentLoopRuntimeTaskActions(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 }
+
+func TestAgentLoopRuntimeApprovalAndMemoryReview(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Agents.Defaults.Workspace = t.TempDir()
+	cfg.Tools.Subagent.Enabled = true
+	cfg.Tools.Spawn.Enabled = true
+	cfg.Tools.SpawnStatus.Enabled = true
+	cfg.Agents.List = []config.AgentConfig{
+		{ID: "main", Default: true, Name: "Main"},
+	}
+	cfg.Teammates.List = []config.TeammateConfig{
+		{
+			ID:             "operator",
+			AgentID:        "main",
+			MemoryScope:    "teammate:operator",
+			ApprovalPolicy: config.ApprovalPolicyConfirmExec,
+		},
+	}
+
+	loop := NewAgentLoop(cfg, bus.NewMessageBus(), &mockProvider{})
+	t.Cleanup(func() {
+		loop.GetRegistry().Close()
+	})
+
+	agentInst := loop.GetRegistry().GetDefaultAgent()
+	rawSpawn, _ := agentInst.Tools.Get("spawn")
+	managerProvider := rawSpawn.(runtimeManagerProvider)
+	manager := managerProvider.Manager()
+
+	started := make(chan struct{})
+	manager.SetSpawner(func(
+		ctx context.Context,
+		task, label, targetAgentID, teammateID string,
+		tls *tools.ToolRegistry,
+		maxTokens int,
+		temperature float64,
+		hasMaxTokens, hasTemperature bool,
+	) (*tools.ToolResult, error) {
+		close(started)
+		return &tools.ToolResult{ForLLM: "Capture the approved server runbook."}, nil
+	})
+
+	task, err := manager.Spawn(context.Background(), tools.SpawnRequest{
+		Task:       "Restart Home Assistant service",
+		TeammateID: "operator",
+	}, nil)
+	if err != nil {
+		t.Fatalf("Spawn() error = %v", err)
+	}
+
+	info, err := loop.GetRuntimeTask("main", task.ID)
+	if err != nil {
+		t.Fatalf("GetRuntimeTask() error = %v", err)
+	}
+	if !info.Approvable || !info.Rejectable {
+		t.Fatalf("task approval flags = %#v, want approvable/rejectable", info)
+	}
+
+	approved, err := loop.ApproveRuntimeTask("main", task.ID, "launcher", "")
+	if err != nil {
+		t.Fatalf("ApproveRuntimeTask() error = %v", err)
+	}
+	if approved.Status != "queued" {
+		t.Fatalf("approved.Status = %q, want queued", approved.Status)
+	}
+
+	<-started
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		current, ok := manager.GetTaskCopy(task.ID)
+		if !ok {
+			t.Fatalf("task %s disappeared", task.ID)
+		}
+		if current.Status == "completed" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("task %s did not complete, status=%s", task.ID, current.Status)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	proposal, err := loop.CreateRuntimeMemoryProposalFromTask("main", task.ID, "shared")
+	if err != nil {
+		t.Fatalf("CreateRuntimeMemoryProposalFromTask() error = %v", err)
+	}
+	if proposal.Status != "pending" {
+		t.Fatalf("proposal.Status = %q, want pending", proposal.Status)
+	}
+
+	approvedProposal, err := loop.ApproveRuntimeMemoryProposal("main", proposal.ID, "launcher", "")
+	if err != nil {
+		t.Fatalf("ApproveRuntimeMemoryProposal() error = %v", err)
+	}
+	if approvedProposal.Status != "approved" {
+		t.Fatalf("approvedProposal.Status = %q, want approved", approvedProposal.Status)
+	}
+
+	snapshot := loop.GetRuntimeSnapshot()
+	if snapshot.Summary.MemoryProposalCount != 1 {
+		t.Fatalf("MemoryProposalCount = %d, want 1", snapshot.Summary.MemoryProposalCount)
+	}
+	if snapshot.MemoryProposals[0].Status != "approved" {
+		t.Fatalf("snapshot.MemoryProposals[0].Status = %q, want approved", snapshot.MemoryProposals[0].Status)
+	}
+}

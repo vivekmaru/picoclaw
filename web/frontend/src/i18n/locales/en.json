@@ -404,13 +404,31 @@
         "task_detail_loading": "Loading the latest task detail...",
         "task_cancel_success": "Cancellation requested for {{id}}.",
         "task_cancel_error": "Failed to cancel the selected task.",
+        "task_approve_success": "Approved task {{id}}.",
+        "task_approve_error": "Failed to approve the selected task.",
+        "task_reject_success": "Rejected task {{id}}.",
+        "task_reject_error": "Failed to reject the selected task.",
+        "memory_review_title": "Memory Review Queue",
+        "memory_review_description": "Promote completed task results into shared or teammate memory, then approve or reject them explicitly.",
+        "memory_review_empty": "No memory proposals are waiting for review.",
+        "memory_detail_title": "Memory Proposal Detail",
+        "memory_detail_description": "Review proposed memory content before it is written into long-term memory.",
+        "memory_detail_empty": "Select a memory proposal to inspect it here.",
+        "memory_proposal_create_success": "Created memory proposal {{id}}.",
+        "memory_proposal_create_error": "Failed to create a memory proposal from the selected task.",
+        "memory_proposal_approve_success": "Approved memory proposal {{id}}.",
+        "memory_proposal_approve_error": "Failed to approve the selected memory proposal.",
+        "memory_proposal_reject_success": "Rejected memory proposal {{id}}.",
+        "memory_proposal_reject_error": "Failed to reject the selected memory proposal.",
         "summary": {
           "agents": "Agents",
           "agents_desc": "Runtime execution units currently registered.",
           "teammates": "Teammates",
           "teammates_desc": "Resolved teammate profiles available for delegation.",
           "tasks": "Tracked Tasks",
-          "tasks_desc": "Delegation tasks currently tracked across agents."
+          "tasks_desc": "Delegation tasks currently tracked across agents.",
+          "memory_proposals": "Memory Proposals",
+          "memory_proposals_desc": "Reviewed memory candidates generated from teammate task results."
         },
         "filters": {
           "status_all": "All statuses",
@@ -419,7 +437,16 @@
         },
         "task_actions": {
           "cancel": "Cancel Task",
-          "canceling": "Canceling..."
+          "canceling": "Canceling...",
+          "approve": "Approve Task",
+          "reject": "Reject Task"
+        },
+        "memory_actions": {
+          "title": "Promote To Memory Review",
+          "shared": "Propose To Shared Memory",
+          "teammate": "Propose To Teammate Memory",
+          "approve": "Approve Memory",
+          "reject": "Reject Memory"
         },
         "fields": {
           "agent": "Agent",
@@ -432,6 +459,8 @@
         "task_fields": {
           "requester": "Requester",
           "agent": "Target Agent",
+          "approval_policy": "Approval Policy",
+          "review_note": "Review Note",
           "memory": "Memory Scope",
           "status": "Status",
           "channel": "Origin Channel",
@@ -440,8 +469,21 @@
           "created": "Created",
           "started": "Started",
           "completed": "Completed",
+          "approved": "Approved",
+          "rejected": "Rejected",
           "workspaces": "Workspace Scope",
           "result": "Result"
+        },
+        "memory_fields": {
+          "scope": "Scope",
+          "target": "Target",
+          "kind": "Kind",
+          "status": "Status",
+          "source_task": "Source Task",
+          "source_teammate": "Source Teammate",
+          "created": "Created",
+          "reviewed": "Reviewed",
+          "content": "Content"
         }
       },
       "skills": {

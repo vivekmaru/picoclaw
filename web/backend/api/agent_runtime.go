@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -32,6 +33,11 @@ func (h *Handler) registerAgentRuntimeRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/agent/runtime", h.handleAgentRuntime)
 	mux.HandleFunc("GET /api/agent/runtime/tasks/{ownerAgentID}/{taskID}", h.handleAgentRuntimeTask)
 	mux.HandleFunc("POST /api/agent/runtime/tasks/{ownerAgentID}/{taskID}/cancel", h.handleCancelAgentRuntimeTask)
+	mux.HandleFunc("POST /api/agent/runtime/tasks/{ownerAgentID}/{taskID}/approve", h.handleApproveAgentRuntimeTask)
+	mux.HandleFunc("POST /api/agent/runtime/tasks/{ownerAgentID}/{taskID}/reject", h.handleRejectAgentRuntimeTask)
+	mux.HandleFunc("POST /api/agent/runtime/tasks/{ownerAgentID}/{taskID}/memory-proposals", h.handleCreateAgentRuntimeMemoryProposal)
+	mux.HandleFunc("POST /api/agent/runtime/memory-proposals/{ownerAgentID}/{proposalID}/approve", h.handleApproveAgentRuntimeMemoryProposal)
+	mux.HandleFunc("POST /api/agent/runtime/memory-proposals/{ownerAgentID}/{proposalID}/reject", h.handleRejectAgentRuntimeMemoryProposal)
 }
 
 func (h *Handler) handleAgentRuntime(w http.ResponseWriter, r *http.Request) {
@@ -75,6 +81,93 @@ func (h *Handler) handleCancelAgentRuntimeTask(w http.ResponseWriter, r *http.Re
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(task); err != nil {
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+	}
+}
+
+func (h *Handler) handleApproveAgentRuntimeTask(w http.ResponseWriter, r *http.Request) {
+	ownerAgentID := r.PathValue("ownerAgentID")
+	taskID := r.PathValue("taskID")
+
+	task, statusCode, err := h.approveGatewayRuntimeTask(ownerAgentID, taskID, gatewayRuntimeRequestTimeout)
+	if err != nil {
+		http.Error(w, err.Error(), statusCode)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(task); err != nil {
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+	}
+}
+
+func (h *Handler) handleRejectAgentRuntimeTask(w http.ResponseWriter, r *http.Request) {
+	ownerAgentID := r.PathValue("ownerAgentID")
+	taskID := r.PathValue("taskID")
+
+	task, statusCode, err := h.rejectGatewayRuntimeTask(ownerAgentID, taskID, gatewayRuntimeRequestTimeout)
+	if err != nil {
+		http.Error(w, err.Error(), statusCode)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(task); err != nil {
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+	}
+}
+
+func (h *Handler) handleCreateAgentRuntimeMemoryProposal(w http.ResponseWriter, r *http.Request) {
+	ownerAgentID := r.PathValue("ownerAgentID")
+	taskID := r.PathValue("taskID")
+	var req struct {
+		Scope string `json:"scope"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	proposal, statusCode, err := h.createGatewayRuntimeMemoryProposal(ownerAgentID, taskID, req.Scope, gatewayRuntimeRequestTimeout)
+	if err != nil {
+		http.Error(w, err.Error(), statusCode)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(proposal); err != nil {
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+	}
+}
+
+func (h *Handler) handleApproveAgentRuntimeMemoryProposal(w http.ResponseWriter, r *http.Request) {
+	ownerAgentID := r.PathValue("ownerAgentID")
+	proposalID := r.PathValue("proposalID")
+
+	proposal, statusCode, err := h.approveGatewayRuntimeMemoryProposal(ownerAgentID, proposalID, gatewayRuntimeRequestTimeout)
+	if err != nil {
+		http.Error(w, err.Error(), statusCode)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(proposal); err != nil {
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+	}
+}
+
+func (h *Handler) handleRejectAgentRuntimeMemoryProposal(w http.ResponseWriter, r *http.Request) {
+	ownerAgentID := r.PathValue("ownerAgentID")
+	proposalID := r.PathValue("proposalID")
+
+	proposal, statusCode, err := h.rejectGatewayRuntimeMemoryProposal(ownerAgentID, proposalID, gatewayRuntimeRequestTimeout)
+	if err != nil {
+		http.Error(w, err.Error(), statusCode)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(proposal); err != nil {
 		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
 	}
 }
@@ -131,6 +224,109 @@ func (h *Handler) cancelGatewayRuntimeTask(ownerAgentID, taskID string, timeout 
 	return &task, http.StatusOK, nil
 }
 
+func (h *Handler) approveGatewayRuntimeTask(ownerAgentID, taskID string, timeout time.Duration) (*agent.RuntimeTaskInfo, int, error) {
+	resp, statusCode, err := h.doGatewayRuntimeRequest(
+		http.MethodPost,
+		"/runtime/agent/tasks/"+url.PathEscape(ownerAgentID)+"/"+url.PathEscape(taskID)+"/approve",
+		nil,
+		timeout,
+	)
+	if err != nil {
+		return nil, statusCode, err
+	}
+	defer resp.Body.Close()
+
+	var task agent.RuntimeTaskInfo
+	if err := json.NewDecoder(resp.Body).Decode(&task); err != nil {
+		return nil, http.StatusBadGateway, err
+	}
+	return &task, http.StatusOK, nil
+}
+
+func (h *Handler) rejectGatewayRuntimeTask(ownerAgentID, taskID string, timeout time.Duration) (*agent.RuntimeTaskInfo, int, error) {
+	resp, statusCode, err := h.doGatewayRuntimeRequest(
+		http.MethodPost,
+		"/runtime/agent/tasks/"+url.PathEscape(ownerAgentID)+"/"+url.PathEscape(taskID)+"/reject",
+		nil,
+		timeout,
+	)
+	if err != nil {
+		return nil, statusCode, err
+	}
+	defer resp.Body.Close()
+
+	var task agent.RuntimeTaskInfo
+	if err := json.NewDecoder(resp.Body).Decode(&task); err != nil {
+		return nil, http.StatusBadGateway, err
+	}
+	return &task, http.StatusOK, nil
+}
+
+func (h *Handler) createGatewayRuntimeMemoryProposal(ownerAgentID, taskID, scope string, timeout time.Duration) (*agent.RuntimeMemoryProposalInfo, int, error) {
+	var body io.Reader
+	if strings.TrimSpace(scope) != "" {
+		payload, err := json.Marshal(map[string]string{"scope": scope})
+		if err != nil {
+			return nil, http.StatusInternalServerError, err
+		}
+		body = bytes.NewReader(payload)
+	}
+	resp, statusCode, err := h.doGatewayRuntimeRequest(
+		http.MethodPost,
+		"/runtime/agent/tasks/"+url.PathEscape(ownerAgentID)+"/"+url.PathEscape(taskID)+"/memory-proposals",
+		body,
+		timeout,
+	)
+	if err != nil {
+		return nil, statusCode, err
+	}
+	defer resp.Body.Close()
+
+	var proposal agent.RuntimeMemoryProposalInfo
+	if err := json.NewDecoder(resp.Body).Decode(&proposal); err != nil {
+		return nil, http.StatusBadGateway, err
+	}
+	return &proposal, http.StatusOK, nil
+}
+
+func (h *Handler) approveGatewayRuntimeMemoryProposal(ownerAgentID, proposalID string, timeout time.Duration) (*agent.RuntimeMemoryProposalInfo, int, error) {
+	resp, statusCode, err := h.doGatewayRuntimeRequest(
+		http.MethodPost,
+		"/runtime/agent/memory-proposals/"+url.PathEscape(ownerAgentID)+"/"+url.PathEscape(proposalID)+"/approve",
+		nil,
+		timeout,
+	)
+	if err != nil {
+		return nil, statusCode, err
+	}
+	defer resp.Body.Close()
+
+	var proposal agent.RuntimeMemoryProposalInfo
+	if err := json.NewDecoder(resp.Body).Decode(&proposal); err != nil {
+		return nil, http.StatusBadGateway, err
+	}
+	return &proposal, http.StatusOK, nil
+}
+
+func (h *Handler) rejectGatewayRuntimeMemoryProposal(ownerAgentID, proposalID string, timeout time.Duration) (*agent.RuntimeMemoryProposalInfo, int, error) {
+	resp, statusCode, err := h.doGatewayRuntimeRequest(
+		http.MethodPost,
+		"/runtime/agent/memory-proposals/"+url.PathEscape(ownerAgentID)+"/"+url.PathEscape(proposalID)+"/reject",
+		nil,
+		timeout,
+	)
+	if err != nil {
+		return nil, statusCode, err
+	}
+	defer resp.Body.Close()
+
+	var proposal agent.RuntimeMemoryProposalInfo
+	if err := json.NewDecoder(resp.Body).Decode(&proposal); err != nil {
+		return nil, http.StatusBadGateway, err
+	}
+	return &proposal, http.StatusOK, nil
+}
+
 func (h *Handler) doGatewayRuntimeRequest(
 	method, path string,
 	body io.Reader,
@@ -160,6 +356,9 @@ func (h *Handler) doGatewayRuntimeRequest(
 	}
 	if pidData.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+pidData.Token)
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
 	}
 
 	resp, err := gatewayRuntimeDo(req, timeout)

@@ -3,14 +3,20 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query"
-import { useEffect, useMemo, useState, type ReactNode } from "react"
+import { useMemo, useState, type ReactNode } from "react"
 import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
 
 import {
+  approveAgentRuntimeMemoryProposal,
+  approveAgentRuntimeTask,
   cancelAgentRuntimeTask,
+  createAgentRuntimeMemoryProposal,
   getAgentRuntime,
   getAgentRuntimeTask,
+  rejectAgentRuntimeMemoryProposal,
+  rejectAgentRuntimeTask,
+  type AgentRuntimeMemoryProposal,
   type AgentRuntimeTask,
 } from "@/api/agent-runtime"
 import { PageHeader } from "@/components/page-header"
@@ -33,24 +39,37 @@ export function TeammatesPage() {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
   const [taskFilter, setTaskFilter] = useState("")
-  const [statusFilter, setStatusFilter] = useState("all")
+  const [taskStatusFilter, setTaskStatusFilter] = useState("all")
+  const [memoryStatusFilter, setMemoryStatusFilter] = useState("all")
   const [selectedTaskKey, setSelectedTaskKey] = useState("")
+  const [selectedProposalKey, setSelectedProposalKey] = useState("")
+
   const { data, isLoading, error } = useQuery({
     queryKey: ["agent-runtime"],
     queryFn: getAgentRuntime,
     refetchInterval: RUNTIME_POLL_MS,
   })
 
-  const taskStatusEntries = useMemo(() => {
-    return Object.entries(data?.summary.task_statuses ?? {}).sort((a, b) =>
-      a[0].localeCompare(b[0]),
-    )
-  }, [data?.summary.task_statuses])
+  const taskStatusEntries = useMemo(
+    () =>
+      Object.entries(data?.summary.task_statuses ?? {}).sort((a, b) =>
+        a[0].localeCompare(b[0]),
+      ),
+    [data?.summary.task_statuses],
+  )
+
+  const memoryStatusEntries = useMemo(
+    () =>
+      Object.entries(data?.summary.memory_proposal_statuses ?? {}).sort((a, b) =>
+        a[0].localeCompare(b[0]),
+      ),
+    [data?.summary.memory_proposal_statuses],
+  )
 
   const filteredTasks = useMemo(() => {
     const normalizedFilter = taskFilter.trim().toLowerCase()
     return (data?.tasks ?? []).filter((task) => {
-      if (statusFilter !== "all" && task.status !== statusFilter) {
+      if (taskStatusFilter !== "all" && task.status !== taskStatusFilter) {
         return false
       }
       if (!normalizedFilter) {
@@ -68,24 +87,43 @@ export function TeammatesPage() {
         .toLowerCase()
         .includes(normalizedFilter)
     })
-  }, [data?.tasks, statusFilter, taskFilter])
+  }, [data?.tasks, taskFilter, taskStatusFilter])
 
-  useEffect(() => {
-    if (filteredTasks.length === 0) {
-      if (selectedTaskKey !== "") {
-        setSelectedTaskKey("")
+  const filteredProposals = useMemo(() => {
+    return (data?.memory_proposals ?? []).filter((proposal) => {
+      if (memoryStatusFilter !== "all" && proposal.status !== memoryStatusFilter) {
+        return false
       }
-      return
+      return true
+    })
+  }, [data?.memory_proposals, memoryStatusFilter])
+
+  const effectiveSelectedTaskKey = useMemo(() => {
+    if (filteredTasks.some((task) => taskKey(task) === selectedTaskKey)) {
+      return selectedTaskKey
     }
-    const exists = filteredTasks.some((task) => taskKey(task) === selectedTaskKey)
-    if (!exists) {
-      setSelectedTaskKey(taskKey(filteredTasks[0]))
-    }
+    return filteredTasks.length > 0 ? taskKey(filteredTasks[0]) : ""
   }, [filteredTasks, selectedTaskKey])
 
-  const selectedTask = useMemo(() => {
-    return filteredTasks.find((task) => taskKey(task) === selectedTaskKey) ?? null
-  }, [filteredTasks, selectedTaskKey])
+  const effectiveSelectedProposalKey = useMemo(() => {
+    if (
+      filteredProposals.some((proposal) => proposalKey(proposal) === selectedProposalKey)
+    ) {
+      return selectedProposalKey
+    }
+    return filteredProposals.length > 0 ? proposalKey(filteredProposals[0]) : ""
+  }, [filteredProposals, selectedProposalKey])
+
+  const selectedTask = useMemo(
+    () => filteredTasks.find((task) => taskKey(task) === effectiveSelectedTaskKey) ?? null,
+    [effectiveSelectedTaskKey, filteredTasks],
+  )
+  const selectedProposal = useMemo(
+    () =>
+      filteredProposals.find((proposal) => proposalKey(proposal) === effectiveSelectedProposalKey) ??
+      null,
+    [effectiveSelectedProposalKey, filteredProposals],
+  )
 
   const taskDetailQuery = useQuery({
     queryKey: [
@@ -101,37 +139,133 @@ export function TeammatesPage() {
     initialData: selectedTask ?? undefined,
   })
 
-  const cancelMutation = useMutation({
+  const taskDetail = taskDetailQuery.data ?? selectedTask
+
+  const invalidateRuntime = () => {
+    void queryClient.invalidateQueries({ queryKey: ["agent-runtime"] })
+    if (taskDetail) {
+      void queryClient.invalidateQueries({
+        queryKey: ["agent-runtime", "task", taskDetail.owner_agent_id, taskDetail.id],
+      })
+    }
+  }
+
+  const cancelTaskMutation = useMutation({
+    mutationFn: ({ ownerAgentID, taskID }: { ownerAgentID: string; taskID: string }) =>
+      cancelAgentRuntimeTask(ownerAgentID, taskID),
+    onSuccess: (task) => {
+      toast.success(t("pages.agent.teammates.task_cancel_success", { id: task.id }))
+      invalidateRuntime()
+    },
+    onError: (mutationError: Error) => {
+      toast.error(mutationError?.message || t("pages.agent.teammates.task_cancel_error"))
+    },
+  })
+
+  const approveTaskMutation = useMutation({
+    mutationFn: ({ ownerAgentID, taskID }: { ownerAgentID: string; taskID: string }) =>
+      approveAgentRuntimeTask(ownerAgentID, taskID),
+    onSuccess: (task) => {
+      toast.success(t("pages.agent.teammates.task_approve_success", { id: task.id }))
+      invalidateRuntime()
+    },
+    onError: (mutationError: Error) => {
+      toast.error(mutationError?.message || t("pages.agent.teammates.task_approve_error"))
+    },
+  })
+
+  const rejectTaskMutation = useMutation({
+    mutationFn: ({ ownerAgentID, taskID }: { ownerAgentID: string; taskID: string }) =>
+      rejectAgentRuntimeTask(ownerAgentID, taskID),
+    onSuccess: (task) => {
+      toast.success(t("pages.agent.teammates.task_reject_success", { id: task.id }))
+      invalidateRuntime()
+    },
+    onError: (mutationError: Error) => {
+      toast.error(mutationError?.message || t("pages.agent.teammates.task_reject_error"))
+    },
+  })
+
+  const createMemoryProposalMutation = useMutation({
     mutationFn: ({
       ownerAgentID,
       taskID,
+      scope,
     }: {
       ownerAgentID: string
       taskID: string
-    }) => cancelAgentRuntimeTask(ownerAgentID, taskID),
-    onSuccess: (task) => {
-      toast.success(t("pages.agent.teammates.task_cancel_success", { id: task.id }))
-      void queryClient.invalidateQueries({ queryKey: ["agent-runtime"] })
-      void queryClient.invalidateQueries({
-        queryKey: ["agent-runtime", "task", task.owner_agent_id, task.id],
-      })
+      scope: string
+    }) => createAgentRuntimeMemoryProposal(ownerAgentID, taskID, scope),
+    onSuccess: (proposal) => {
+      toast.success(
+        t("pages.agent.teammates.memory_proposal_create_success", {
+          id: proposal.id,
+        }),
+      )
+      invalidateRuntime()
     },
     onError: (mutationError: Error) => {
       toast.error(
         mutationError?.message ||
-          t("pages.agent.teammates.task_cancel_error"),
+          t("pages.agent.teammates.memory_proposal_create_error"),
       )
     },
   })
 
-  const taskDetail = taskDetailQuery.data ?? selectedTask
+  const approveMemoryProposalMutation = useMutation({
+    mutationFn: ({
+      ownerAgentID,
+      proposalID,
+    }: {
+      ownerAgentID: string
+      proposalID: string
+    }) => approveAgentRuntimeMemoryProposal(ownerAgentID, proposalID),
+    onSuccess: (proposal) => {
+      toast.success(
+        t("pages.agent.teammates.memory_proposal_approve_success", {
+          id: proposal.id,
+        }),
+      )
+      invalidateRuntime()
+    },
+    onError: (mutationError: Error) => {
+      toast.error(
+        mutationError?.message ||
+          t("pages.agent.teammates.memory_proposal_approve_error"),
+      )
+    },
+  })
+
+  const rejectMemoryProposalMutation = useMutation({
+    mutationFn: ({
+      ownerAgentID,
+      proposalID,
+    }: {
+      ownerAgentID: string
+      proposalID: string
+    }) => rejectAgentRuntimeMemoryProposal(ownerAgentID, proposalID),
+    onSuccess: (proposal) => {
+      toast.success(
+        t("pages.agent.teammates.memory_proposal_reject_success", {
+          id: proposal.id,
+        }),
+      )
+      invalidateRuntime()
+    },
+    onError: (mutationError: Error) => {
+      toast.error(
+        mutationError?.message ||
+          t("pages.agent.teammates.memory_proposal_reject_error"),
+      )
+    },
+  })
 
   return (
     <div className="bg-background flex h-full flex-col">
       <PageHeader title={t("navigation.teammates")} />
 
       <div className="flex-1 overflow-auto px-6 py-6">
-        <div className="mx-auto w-full max-w-6xl space-y-8">
+        <div className="mx-auto w-full max-w-7xl space-y-8">
           {error ? (
             <Card className="border-destructive/50 bg-destructive/10">
               <CardContent className="py-10">
@@ -147,7 +281,7 @@ export function TeammatesPage() {
             <RuntimeLoadingState />
           ) : !data ? null : (
             <>
-              <section className="grid gap-4 md:grid-cols-3">
+              <section className="grid gap-4 md:grid-cols-4">
                 <MetricCard
                   title={t("pages.agent.teammates.summary.agents")}
                   value={data.summary.agent_count}
@@ -163,9 +297,14 @@ export function TeammatesPage() {
                   value={data.summary.task_count}
                   description={t("pages.agent.teammates.summary.tasks_desc")}
                 />
+                <MetricCard
+                  title={t("pages.agent.teammates.summary.memory_proposals")}
+                  value={data.summary.memory_proposal_count}
+                  description={t("pages.agent.teammates.summary.memory_proposals_desc")}
+                />
               </section>
 
-              <section className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
+              <section className="grid gap-6 xl:grid-cols-[0.8fr_1.2fr]">
                 <Card>
                   <CardHeader>
                     <CardTitle>{t("pages.agent.teammates.title")}</CardTitle>
@@ -229,274 +368,551 @@ export function TeammatesPage() {
                   </CardContent>
                 </Card>
 
-                <Card>
-                  <CardHeader>
-                    <CardTitle>{t("pages.agent.teammates.task_title")}</CardTitle>
-                    <CardDescription>
-                      {t("pages.agent.teammates.task_description")}
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    {taskStatusEntries.length > 0 ? (
-                      <div className="flex flex-wrap gap-2">
-                        <StatusFilterButton
-                          active={statusFilter === "all"}
-                          onClick={() => setStatusFilter("all")}
-                        >
-                          {t("pages.agent.teammates.filters.status_all")}
-                        </StatusFilterButton>
-                        {taskStatusEntries.map(([status, count]) => (
-                          <StatusFilterButton
-                            key={status}
-                            active={statusFilter === status}
-                            onClick={() => setStatusFilter(status)}
-                          >
-                            {status}: {count}
-                          </StatusFilterButton>
-                        ))}
-                      </div>
-                    ) : null}
-
-                    <Input
-                      value={taskFilter}
-                      onChange={(event) => setTaskFilter(event.target.value)}
-                      placeholder={t(
-                        "pages.agent.teammates.filters.search_placeholder",
-                      )}
-                    />
-
-                    {data.tasks.length === 0 ? (
-                      <p className="text-muted-foreground text-sm">
-                        {t("pages.agent.teammates.tasks_empty")}
-                      </p>
-                    ) : (
-                      <div className="grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
-                        <div className="space-y-3">
-                          {filteredTasks.length === 0 ? (
-                            <p className="text-muted-foreground rounded-xl border p-4 text-sm">
-                              {t("pages.agent.teammates.filters.no_results")}
-                            </p>
-                          ) : (
-                            filteredTasks.map((task) => {
-                              const isSelected = taskKey(task) === selectedTaskKey
-                              return (
-                                <button
-                                  key={taskKey(task)}
-                                  type="button"
-                                  onClick={() => setSelectedTaskKey(taskKey(task))}
-                                  className={cn(
-                                    "border-border/60 hover:border-primary/40 hover:bg-muted/40 w-full rounded-xl border p-4 text-left transition-colors",
-                                    isSelected && "border-primary/50 bg-muted/60",
-                                  )}
-                                >
-                                  <div className="flex flex-wrap items-center gap-2">
-                                    <div className="font-mono text-sm">{task.id}</div>
-                                    <TaskStatusBadge status={task.status} />
-                                    <Badge variant="secondary">
-                                      {task.owner_agent_id}
-                                    </Badge>
-                                    {task.teammate_id ? (
-                                      <Badge variant="outline">
-                                        {task.teammate_id}
-                                      </Badge>
-                                    ) : null}
-                                  </div>
-                                  {task.label ? (
-                                    <p className="mt-2 text-sm font-medium">
-                                      {task.label}
-                                    </p>
-                                  ) : null}
-                                  <p className="text-muted-foreground mt-2 line-clamp-3 text-sm whitespace-pre-wrap">
-                                    {task.task}
-                                  </p>
-                                  <div className="text-muted-foreground mt-3 flex flex-wrap gap-3 text-xs">
-                                    <span>
-                                      {t(
-                                        "pages.agent.teammates.task_fields.created",
-                                      )}
-                                      : {formatTimestamp(task.created)}
-                                    </span>
-                                    {task.cancelable ? (
-                                      <span>
-                                        {t(
-                                          "pages.agent.teammates.task_actions.cancel",
-                                        )}
-                                      </span>
-                                    ) : null}
-                                  </div>
-                                </button>
-                              )
-                            })
-                          )}
-                        </div>
-
-                        <Card className="bg-muted/20 border-dashed">
-                          <CardHeader>
-                            <CardTitle>
-                              {t("pages.agent.teammates.task_detail_title")}
-                            </CardTitle>
-                            <CardDescription>
-                              {t("pages.agent.teammates.task_detail_description")}
-                            </CardDescription>
-                          </CardHeader>
-                          <CardContent className="space-y-4">
-                            {!selectedTask ? (
-                              <p className="text-muted-foreground text-sm">
-                                {t("pages.agent.teammates.task_detail_empty")}
-                              </p>
-                            ) : taskDetailQuery.isLoading && !taskDetail ? (
-                              <p className="text-muted-foreground text-sm">
-                                {t("pages.agent.teammates.task_detail_loading")}
-                              </p>
-                            ) : taskDetail ? (
-                              <>
-                                <div className="flex flex-wrap items-center gap-2">
-                                  <div className="font-mono text-sm">
-                                    {taskDetail.id}
-                                  </div>
-                                  <TaskStatusBadge status={taskDetail.status} />
-                                  <Badge variant="secondary">
-                                    {taskDetail.owner_agent_id}
-                                  </Badge>
-                                  {taskDetail.teammate_id ? (
-                                    <Badge variant="outline">
-                                      {taskDetail.teammate_id}
-                                    </Badge>
-                                  ) : null}
-                                </div>
-
-                                {taskDetail.label ? (
-                                  <p className="text-base font-medium">
-                                    {taskDetail.label}
-                                  </p>
-                                ) : null}
-
-                                <p className="text-sm whitespace-pre-wrap">
-                                  {taskDetail.task}
-                                </p>
-
-                                <div className="flex flex-wrap gap-2">
-                                  <Button
-                                    variant="destructive"
-                                    size="sm"
-                                    disabled={
-                                      !taskDetail.cancelable ||
-                                      cancelMutation.isPending
-                                    }
-                                    onClick={() =>
-                                      cancelMutation.mutate({
-                                        ownerAgentID: taskDetail.owner_agent_id,
-                                        taskID: taskDetail.id,
-                                      })
-                                    }
-                                  >
-                                    {cancelMutation.isPending
-                                      ? t(
-                                          "pages.agent.teammates.task_actions.canceling",
-                                        )
-                                      : t(
-                                          "pages.agent.teammates.task_actions.cancel",
-                                        )}
-                                  </Button>
-                                </div>
-
-                                <dl className="text-muted-foreground grid gap-3 text-sm sm:grid-cols-2">
-                                  <RuntimeField
-                                    label={t(
-                                      "pages.agent.teammates.task_fields.requester",
-                                    )}
-                                    value={
-                                      taskDetail.requester_teammate_id ||
-                                      taskDetail.requester_agent_id
-                                    }
-                                  />
-                                  <RuntimeField
-                                    label={t(
-                                      "pages.agent.teammates.task_fields.agent",
-                                    )}
-                                    value={taskDetail.agent_id}
-                                  />
-                                  <RuntimeField
-                                    label={t(
-                                      "pages.agent.teammates.task_fields.memory",
-                                    )}
-                                    value={taskDetail.memory_scope}
-                                  />
-                                  <RuntimeField
-                                    label={t(
-                                      "pages.agent.teammates.task_fields.status",
-                                    )}
-                                    value={taskDetail.status}
-                                  />
-                                  <RuntimeField
-                                    label={t(
-                                      "pages.agent.teammates.task_fields.channel",
-                                    )}
-                                    value={taskDetail.origin_channel}
-                                  />
-                                  <RuntimeField
-                                    label={t(
-                                      "pages.agent.teammates.task_fields.chat",
-                                    )}
-                                    value={taskDetail.origin_chat_id}
-                                  />
-                                  <RuntimeField
-                                    label={t(
-                                      "pages.agent.teammates.task_fields.kind",
-                                    )}
-                                    value={taskDetail.kind}
-                                  />
-                                  <RuntimeField
-                                    label={t(
-                                      "pages.agent.teammates.task_fields.created",
-                                    )}
-                                    value={formatTimestamp(taskDetail.created)}
-                                  />
-                                  <RuntimeField
-                                    label={t(
-                                      "pages.agent.teammates.task_fields.started",
-                                    )}
-                                    value={formatTimestamp(taskDetail.started)}
-                                  />
-                                  <RuntimeField
-                                    label={t(
-                                      "pages.agent.teammates.task_fields.completed",
-                                    )}
-                                    value={formatTimestamp(taskDetail.completed)}
-                                  />
-                                </dl>
-
-                                {taskDetail.workspace_scope?.length ? (
-                                  <RuntimeList
-                                    label={t(
-                                      "pages.agent.teammates.task_fields.workspaces",
-                                    )}
-                                    items={taskDetail.workspace_scope}
-                                  />
-                                ) : null}
-
-                                <div className="space-y-2">
-                                  <div className="text-xs uppercase opacity-70">
-                                    {t("pages.agent.teammates.task_fields.result")}
-                                  </div>
-                                  <pre className="bg-background overflow-x-auto rounded-xl border p-3 text-xs whitespace-pre-wrap">
-                                    {taskDetail.result?.trim() || "—"}
-                                  </pre>
-                                </div>
-                              </>
-                            ) : null}
-                          </CardContent>
-                        </Card>
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
+                <TaskWorkbench
+                  t={t}
+                  tasks={filteredTasks}
+                  taskStatusEntries={taskStatusEntries}
+                  taskStatusFilter={taskStatusFilter}
+                  setTaskStatusFilter={setTaskStatusFilter}
+                  taskFilter={taskFilter}
+                  setTaskFilter={setTaskFilter}
+                  selectedTaskKey={selectedTaskKey}
+                  setSelectedTaskKey={setSelectedTaskKey}
+                  taskDetail={taskDetail}
+                  taskDetailLoading={taskDetailQuery.isLoading && !taskDetail}
+                  onCancel={(task) =>
+                    cancelTaskMutation.mutate({
+                      ownerAgentID: task.owner_agent_id,
+                      taskID: task.id,
+                    })
+                  }
+                  onApprove={(task) =>
+                    approveTaskMutation.mutate({
+                      ownerAgentID: task.owner_agent_id,
+                      taskID: task.id,
+                    })
+                  }
+                  onReject={(task) =>
+                    rejectTaskMutation.mutate({
+                      ownerAgentID: task.owner_agent_id,
+                      taskID: task.id,
+                    })
+                  }
+                  onProposeShared={(task) =>
+                    createMemoryProposalMutation.mutate({
+                      ownerAgentID: task.owner_agent_id,
+                      taskID: task.id,
+                      scope: "shared",
+                    })
+                  }
+                  onProposeTeammate={(task) =>
+                    createMemoryProposalMutation.mutate({
+                      ownerAgentID: task.owner_agent_id,
+                      taskID: task.id,
+                      scope: task.memory_scope || "shared",
+                    })
+                  }
+                  busy={
+                    cancelTaskMutation.isPending ||
+                    approveTaskMutation.isPending ||
+                    rejectTaskMutation.isPending ||
+                    createMemoryProposalMutation.isPending
+                  }
+                />
               </section>
+
+              <MemoryReviewSection
+                t={t}
+                proposals={filteredProposals}
+                memoryStatusEntries={memoryStatusEntries}
+                memoryStatusFilter={memoryStatusFilter}
+                setMemoryStatusFilter={setMemoryStatusFilter}
+                selectedProposalKey={selectedProposalKey}
+                setSelectedProposalKey={setSelectedProposalKey}
+                selectedProposal={selectedProposal}
+                onApprove={(proposal) =>
+                  approveMemoryProposalMutation.mutate({
+                    ownerAgentID: proposal.owner_agent_id,
+                    proposalID: proposal.id,
+                  })
+                }
+                onReject={(proposal) =>
+                  rejectMemoryProposalMutation.mutate({
+                    ownerAgentID: proposal.owner_agent_id,
+                    proposalID: proposal.id,
+                  })
+                }
+                busy={
+                  approveMemoryProposalMutation.isPending ||
+                  rejectMemoryProposalMutation.isPending
+                }
+              />
             </>
           )}
         </div>
       </div>
     </div>
+  )
+}
+
+function TaskWorkbench(props: {
+  t: (key: string, options?: Record<string, unknown>) => string
+  tasks: AgentRuntimeTask[]
+  taskStatusEntries: Array<[string, number]>
+  taskStatusFilter: string
+  setTaskStatusFilter: (value: string) => void
+  taskFilter: string
+  setTaskFilter: (value: string) => void
+  selectedTaskKey: string
+  setSelectedTaskKey: (value: string) => void
+  taskDetail: AgentRuntimeTask | null
+  taskDetailLoading: boolean
+  onCancel: (task: AgentRuntimeTask) => void
+  onApprove: (task: AgentRuntimeTask) => void
+  onReject: (task: AgentRuntimeTask) => void
+  onProposeShared: (task: AgentRuntimeTask) => void
+  onProposeTeammate: (task: AgentRuntimeTask) => void
+  busy: boolean
+}) {
+  const selectedTask = props.taskDetail
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>{props.t("pages.agent.teammates.task_title")}</CardTitle>
+        <CardDescription>
+          {props.t("pages.agent.teammates.task_description")}
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {props.taskStatusEntries.length > 0 ? (
+          <div className="flex flex-wrap gap-2">
+            <StatusFilterButton
+              active={props.taskStatusFilter === "all"}
+              onClick={() => props.setTaskStatusFilter("all")}
+            >
+              {props.t("pages.agent.teammates.filters.status_all")}
+            </StatusFilterButton>
+            {props.taskStatusEntries.map(([status, count]) => (
+              <StatusFilterButton
+                key={status}
+                active={props.taskStatusFilter === status}
+                onClick={() => props.setTaskStatusFilter(status)}
+              >
+                {status}: {count}
+              </StatusFilterButton>
+            ))}
+          </div>
+        ) : null}
+
+        <Input
+          value={props.taskFilter}
+          onChange={(event) => props.setTaskFilter(event.target.value)}
+          placeholder={props.t("pages.agent.teammates.filters.search_placeholder")}
+        />
+
+        {props.tasks.length === 0 ? (
+          <p className="text-muted-foreground text-sm">
+            {props.t("pages.agent.teammates.tasks_empty")}
+          </p>
+        ) : (
+          <div className="grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
+            <div className="space-y-3">
+              {props.tasks.map((task) => {
+                const isSelected = taskKey(task) === props.selectedTaskKey
+                return (
+                  <button
+                    key={taskKey(task)}
+                    type="button"
+                    onClick={() => props.setSelectedTaskKey(taskKey(task))}
+                    className={cn(
+                      "border-border/60 hover:border-primary/40 hover:bg-muted/40 w-full rounded-xl border p-4 text-left transition-colors",
+                      isSelected && "border-primary/50 bg-muted/60",
+                    )}
+                  >
+                    <div className="flex flex-wrap items-center gap-2">
+                      <div className="font-mono text-sm">{task.id}</div>
+                      <TaskStatusBadge status={task.status} />
+                      <Badge variant="secondary">{task.owner_agent_id}</Badge>
+                      {task.teammate_id ? (
+                        <Badge variant="outline">{task.teammate_id}</Badge>
+                      ) : null}
+                    </div>
+                    {task.label ? (
+                      <p className="mt-2 text-sm font-medium">{task.label}</p>
+                    ) : null}
+                    <p className="text-muted-foreground mt-2 line-clamp-3 text-sm whitespace-pre-wrap">
+                      {task.task}
+                    </p>
+                  </button>
+                )
+              })}
+              {props.tasks.length === 0 ? (
+                <p className="text-muted-foreground rounded-xl border p-4 text-sm">
+                  {props.t("pages.agent.teammates.filters.no_results")}
+                </p>
+              ) : null}
+            </div>
+
+            <Card className="bg-muted/20 border-dashed">
+              <CardHeader>
+                <CardTitle>{props.t("pages.agent.teammates.task_detail_title")}</CardTitle>
+                <CardDescription>
+                  {props.t("pages.agent.teammates.task_detail_description")}
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {!selectedTask ? (
+                  <p className="text-muted-foreground text-sm">
+                    {props.t("pages.agent.teammates.task_detail_empty")}
+                  </p>
+                ) : props.taskDetailLoading ? (
+                  <p className="text-muted-foreground text-sm">
+                    {props.t("pages.agent.teammates.task_detail_loading")}
+                  </p>
+                ) : (
+                  <>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <div className="font-mono text-sm">{selectedTask.id}</div>
+                      <TaskStatusBadge status={selectedTask.status} />
+                      <Badge variant="secondary">{selectedTask.owner_agent_id}</Badge>
+                      {selectedTask.teammate_id ? (
+                        <Badge variant="outline">{selectedTask.teammate_id}</Badge>
+                      ) : null}
+                    </div>
+
+                    {selectedTask.label ? (
+                      <p className="text-base font-medium">{selectedTask.label}</p>
+                    ) : null}
+
+                    <p className="text-sm whitespace-pre-wrap">{selectedTask.task}</p>
+
+                    <div className="flex flex-wrap gap-2">
+                      {selectedTask.approvable ? (
+                        <Button
+                          size="sm"
+                          disabled={props.busy}
+                          onClick={() => props.onApprove(selectedTask)}
+                        >
+                          {props.t("pages.agent.teammates.task_actions.approve")}
+                        </Button>
+                      ) : null}
+                      {selectedTask.rejectable ? (
+                        <Button
+                          variant="destructive"
+                          size="sm"
+                          disabled={props.busy}
+                          onClick={() => props.onReject(selectedTask)}
+                        >
+                          {props.t("pages.agent.teammates.task_actions.reject")}
+                        </Button>
+                      ) : null}
+                      {selectedTask.cancelable ? (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={props.busy}
+                          onClick={() => props.onCancel(selectedTask)}
+                        >
+                          {props.t("pages.agent.teammates.task_actions.cancel")}
+                        </Button>
+                      ) : null}
+                    </div>
+
+                    {canPromoteTaskToMemory(selectedTask) ? (
+                      <div className="space-y-2">
+                        <div className="text-xs uppercase opacity-70">
+                          {props.t("pages.agent.teammates.memory_actions.title")}
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            disabled={props.busy}
+                            onClick={() => props.onProposeShared(selectedTask)}
+                          >
+                            {props.t("pages.agent.teammates.memory_actions.shared")}
+                          </Button>
+                          {selectedTask.memory_scope &&
+                          selectedTask.memory_scope !== "shared" ? (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              disabled={props.busy}
+                              onClick={() => props.onProposeTeammate(selectedTask)}
+                            >
+                              {props.t("pages.agent.teammates.memory_actions.teammate")}
+                            </Button>
+                          ) : null}
+                        </div>
+                      </div>
+                    ) : null}
+
+                    <dl className="text-muted-foreground grid gap-3 text-sm sm:grid-cols-2">
+                      <RuntimeField
+                        label={props.t("pages.agent.teammates.task_fields.requester")}
+                        value={
+                          selectedTask.requester_teammate_id ||
+                          selectedTask.requester_agent_id
+                        }
+                      />
+                      <RuntimeField
+                        label={props.t("pages.agent.teammates.task_fields.agent")}
+                        value={selectedTask.agent_id}
+                      />
+                      <RuntimeField
+                        label={props.t("pages.agent.teammates.task_fields.approval_policy")}
+                        value={selectedTask.approval_policy}
+                      />
+                      <RuntimeField
+                        label={props.t("pages.agent.teammates.task_fields.review_note")}
+                        value={selectedTask.review_note}
+                      />
+                      <RuntimeField
+                        label={props.t("pages.agent.teammates.task_fields.memory")}
+                        value={selectedTask.memory_scope}
+                      />
+                      <RuntimeField
+                        label={props.t("pages.agent.teammates.task_fields.status")}
+                        value={selectedTask.status}
+                      />
+                      <RuntimeField
+                        label={props.t("pages.agent.teammates.task_fields.channel")}
+                        value={selectedTask.origin_channel}
+                      />
+                      <RuntimeField
+                        label={props.t("pages.agent.teammates.task_fields.chat")}
+                        value={selectedTask.origin_chat_id}
+                      />
+                      <RuntimeField
+                        label={props.t("pages.agent.teammates.task_fields.kind")}
+                        value={selectedTask.kind}
+                      />
+                      <RuntimeField
+                        label={props.t("pages.agent.teammates.task_fields.created")}
+                        value={formatTimestamp(selectedTask.created)}
+                      />
+                      <RuntimeField
+                        label={props.t("pages.agent.teammates.task_fields.started")}
+                        value={formatTimestamp(selectedTask.started)}
+                      />
+                      <RuntimeField
+                        label={props.t("pages.agent.teammates.task_fields.completed")}
+                        value={formatTimestamp(selectedTask.completed)}
+                      />
+                      <RuntimeField
+                        label={props.t("pages.agent.teammates.task_fields.approved")}
+                        value={formatReviewed(selectedTask.approved_by, selectedTask.approved_at)}
+                      />
+                      <RuntimeField
+                        label={props.t("pages.agent.teammates.task_fields.rejected")}
+                        value={formatReviewed(selectedTask.rejected_by, selectedTask.rejected_at)}
+                      />
+                    </dl>
+
+                    {selectedTask.workspace_scope?.length ? (
+                      <RuntimeList
+                        label={props.t("pages.agent.teammates.task_fields.workspaces")}
+                        items={selectedTask.workspace_scope}
+                      />
+                    ) : null}
+
+                    <div className="space-y-2">
+                      <div className="text-xs uppercase opacity-70">
+                        {props.t("pages.agent.teammates.task_fields.result")}
+                      </div>
+                      <pre className="bg-background overflow-x-auto rounded-xl border p-3 text-xs whitespace-pre-wrap">
+                        {selectedTask.result?.trim() || "—"}
+                      </pre>
+                    </div>
+                  </>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+function MemoryReviewSection(props: {
+  t: (key: string, options?: Record<string, unknown>) => string
+  proposals: AgentRuntimeMemoryProposal[]
+  memoryStatusEntries: Array<[string, number]>
+  memoryStatusFilter: string
+  setMemoryStatusFilter: (value: string) => void
+  selectedProposalKey: string
+  setSelectedProposalKey: (value: string) => void
+  selectedProposal: AgentRuntimeMemoryProposal | null
+  onApprove: (proposal: AgentRuntimeMemoryProposal) => void
+  onReject: (proposal: AgentRuntimeMemoryProposal) => void
+  busy: boolean
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>{props.t("pages.agent.teammates.memory_review_title")}</CardTitle>
+        <CardDescription>
+          {props.t("pages.agent.teammates.memory_review_description")}
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {props.memoryStatusEntries.length > 0 ? (
+          <div className="flex flex-wrap gap-2">
+            <StatusFilterButton
+              active={props.memoryStatusFilter === "all"}
+              onClick={() => props.setMemoryStatusFilter("all")}
+            >
+              {props.t("pages.agent.teammates.filters.status_all")}
+            </StatusFilterButton>
+            {props.memoryStatusEntries.map(([status, count]) => (
+              <StatusFilterButton
+                key={status}
+                active={props.memoryStatusFilter === status}
+                onClick={() => props.setMemoryStatusFilter(status)}
+              >
+                {status}: {count}
+              </StatusFilterButton>
+            ))}
+          </div>
+        ) : null}
+
+        {props.proposals.length === 0 ? (
+          <p className="text-muted-foreground text-sm">
+            {props.t("pages.agent.teammates.memory_review_empty")}
+          </p>
+        ) : (
+          <div className="grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
+            <div className="space-y-3">
+              {props.proposals.map((proposal) => {
+                const isSelected = proposalKey(proposal) === props.selectedProposalKey
+                return (
+                  <button
+                    key={proposalKey(proposal)}
+                    type="button"
+                    onClick={() => props.setSelectedProposalKey(proposalKey(proposal))}
+                    className={cn(
+                      "border-border/60 hover:border-primary/40 hover:bg-muted/40 w-full rounded-xl border p-4 text-left transition-colors",
+                      isSelected && "border-primary/50 bg-muted/60",
+                    )}
+                  >
+                    <div className="flex flex-wrap items-center gap-2">
+                      <div className="font-mono text-sm">{proposal.id}</div>
+                      <MemoryProposalBadge status={proposal.status} />
+                      <Badge variant="secondary">{proposal.owner_agent_id}</Badge>
+                    </div>
+                    {proposal.title ? (
+                      <p className="mt-2 text-sm font-medium">{proposal.title}</p>
+                    ) : null}
+                    <p className="text-muted-foreground mt-2 line-clamp-3 text-sm whitespace-pre-wrap">
+                      {proposal.content}
+                    </p>
+                  </button>
+                )
+              })}
+            </div>
+
+            <Card className="bg-muted/20 border-dashed">
+              <CardHeader>
+                <CardTitle>{props.t("pages.agent.teammates.memory_detail_title")}</CardTitle>
+                <CardDescription>
+                  {props.t("pages.agent.teammates.memory_detail_description")}
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {!props.selectedProposal ? (
+                  <p className="text-muted-foreground text-sm">
+                    {props.t("pages.agent.teammates.memory_detail_empty")}
+                  </p>
+                ) : (
+                  <>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <div className="font-mono text-sm">{props.selectedProposal.id}</div>
+                      <MemoryProposalBadge status={props.selectedProposal.status} />
+                      <Badge variant="secondary">{props.selectedProposal.owner_agent_id}</Badge>
+                    </div>
+
+                    {props.selectedProposal.title ? (
+                      <p className="text-base font-medium">{props.selectedProposal.title}</p>
+                    ) : null}
+
+                    <div className="flex flex-wrap gap-2">
+                      {props.selectedProposal.approvable ? (
+                        <Button
+                          size="sm"
+                          disabled={props.busy}
+                          onClick={() => props.onApprove(props.selectedProposal!)}
+                        >
+                          {props.t("pages.agent.teammates.memory_actions.approve")}
+                        </Button>
+                      ) : null}
+                      {props.selectedProposal.rejectable ? (
+                        <Button
+                          variant="destructive"
+                          size="sm"
+                          disabled={props.busy}
+                          onClick={() => props.onReject(props.selectedProposal!)}
+                        >
+                          {props.t("pages.agent.teammates.memory_actions.reject")}
+                        </Button>
+                      ) : null}
+                    </div>
+
+                    <dl className="text-muted-foreground grid gap-3 text-sm sm:grid-cols-2">
+                      <RuntimeField
+                        label={props.t("pages.agent.teammates.memory_fields.scope")}
+                        value={props.selectedProposal.scope}
+                      />
+                      <RuntimeField
+                        label={props.t("pages.agent.teammates.memory_fields.target")}
+                        value={props.selectedProposal.target}
+                      />
+                      <RuntimeField
+                        label={props.t("pages.agent.teammates.memory_fields.kind")}
+                        value={props.selectedProposal.kind}
+                      />
+                      <RuntimeField
+                        label={props.t("pages.agent.teammates.memory_fields.status")}
+                        value={props.selectedProposal.status}
+                      />
+                      <RuntimeField
+                        label={props.t("pages.agent.teammates.memory_fields.source_task")}
+                        value={props.selectedProposal.source_task_id}
+                      />
+                      <RuntimeField
+                        label={props.t("pages.agent.teammates.memory_fields.source_teammate")}
+                        value={props.selectedProposal.source_teammate_id}
+                      />
+                      <RuntimeField
+                        label={props.t("pages.agent.teammates.memory_fields.created")}
+                        value={formatTimestamp(props.selectedProposal.created)}
+                      />
+                      <RuntimeField
+                        label={props.t("pages.agent.teammates.memory_fields.reviewed")}
+                        value={formatReviewed(
+                          props.selectedProposal.reviewed_by,
+                          props.selectedProposal.reviewed_at,
+                        )}
+                      />
+                    </dl>
+
+                    <div className="space-y-2">
+                      <div className="text-xs uppercase opacity-70">
+                        {props.t("pages.agent.teammates.memory_fields.content")}
+                      </div>
+                      <pre className="bg-background overflow-x-auto rounded-xl border p-3 text-xs whitespace-pre-wrap">
+                        {props.selectedProposal.content}
+                      </pre>
+                    </div>
+                  </>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   )
 }
 
@@ -562,19 +978,32 @@ function TaskStatusBadge({ status }: { status: string }) {
   const variant =
     normalized === "completed"
       ? "secondary"
-      : normalized === "failed" || normalized === "canceled"
+      : normalized === "failed" || normalized === "canceled" || normalized === "denied"
         ? "destructive"
-        : normalized === "canceling"
+        : normalized === "awaiting_approval"
           ? "default"
-          : "outline"
+          : normalized === "canceling"
+            ? "default"
+            : "outline"
+  return <Badge variant={variant}>{status}</Badge>
+}
+
+function MemoryProposalBadge({ status }: { status: string }) {
+  const normalized = status.toLowerCase()
+  const variant =
+    normalized === "approved"
+      ? "secondary"
+      : normalized === "rejected"
+        ? "destructive"
+        : "default"
   return <Badge variant={variant}>{status}</Badge>
 }
 
 function RuntimeLoadingState() {
   return (
     <div className="space-y-6">
-      <div className="grid gap-4 md:grid-cols-3">
-        {[1, 2, 3].map((item) => (
+      <div className="grid gap-4 md:grid-cols-4">
+        {[1, 2, 3, 4].map((item) => (
           <Card key={item}>
             <CardHeader className="pb-2">
               <Skeleton className="h-4 w-24" />
@@ -587,7 +1016,7 @@ function RuntimeLoadingState() {
         ))}
       </div>
       <div className="grid gap-6 xl:grid-cols-2">
-        {[1, 2].map((item) => (
+        {[1, 2, 3].map((item) => (
           <Card key={item}>
             <CardHeader>
               <Skeleton className="h-5 w-32" />
@@ -613,9 +1042,40 @@ function taskKey(task: Pick<AgentRuntimeTask, "owner_agent_id" | "id">) {
   return `${task.owner_agent_id}:${task.id}`
 }
 
+function proposalKey(
+  proposal: Pick<AgentRuntimeMemoryProposal, "owner_agent_id" | "id">,
+) {
+  return `${proposal.owner_agent_id}:${proposal.id}`
+}
+
 function formatTimestamp(value?: number) {
   if (!value) {
     return ""
   }
   return new Date(value).toLocaleString()
+}
+
+function formatReviewed(actor?: string, at?: number) {
+  if (!actor && !at) {
+    return ""
+  }
+  if (actor && at) {
+    return `${actor} · ${formatTimestamp(at)}`
+  }
+  return actor || formatTimestamp(at)
+}
+
+function canPromoteTaskToMemory(task: AgentRuntimeTask) {
+  if (!task.result?.trim()) {
+    return false
+  }
+  switch (task.status.toLowerCase()) {
+    case "completed":
+    case "failed":
+    case "canceled":
+    case "denied":
+      return true
+    default:
+      return false
+  }
 }

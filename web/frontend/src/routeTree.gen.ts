@@ -20,9 +20,9 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as ConfigRawRouteImport } from './routes/config.raw'
 import { Route as ChannelsNameRouteImport } from './routes/channels/$name'
 import { Route as AgentToolsRouteImport } from './routes/agent/tools'
+import { Route as AgentTeammatesRouteImport } from './routes/agent/teammates'
 import { Route as AgentSkillsRouteImport } from './routes/agent/skills'
 import { Route as AgentHubRouteImport } from './routes/agent/hub'
-import { Route as AgentTeammatesRouteImport } from './routes/agent/teammates'
 
 const ModelsRoute = ModelsRouteImport.update({
   id: '/models',
@@ -79,6 +79,11 @@ const AgentToolsRoute = AgentToolsRouteImport.update({
   path: '/tools',
   getParentRoute: () => AgentRoute,
 } as any)
+const AgentTeammatesRoute = AgentTeammatesRouteImport.update({
+  id: '/teammates',
+  path: '/teammates',
+  getParentRoute: () => AgentRoute,
+} as any)
 const AgentSkillsRoute = AgentSkillsRouteImport.update({
   id: '/skills',
   path: '/skills',
@@ -87,11 +92,6 @@ const AgentSkillsRoute = AgentSkillsRouteImport.update({
 const AgentHubRoute = AgentHubRouteImport.update({
   id: '/hub',
   path: '/hub',
-  getParentRoute: () => AgentRoute,
-} as any)
-const AgentTeammatesRoute = AgentTeammatesRouteImport.update({
-  id: '/teammates',
-  path: '/teammates',
   getParentRoute: () => AgentRoute,
 } as any)
 
@@ -285,18 +285,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AgentToolsRouteImport
       parentRoute: typeof AgentRoute
     }
-    '/agent/skills': {
-      id: '/agent/skills'
-      path: '/skills'
-      fullPath: '/agent/skills'
-      preLoaderRoute: typeof AgentSkillsRouteImport
-      parentRoute: typeof AgentRoute
-    }
     '/agent/teammates': {
       id: '/agent/teammates'
       path: '/teammates'
       fullPath: '/agent/teammates'
       preLoaderRoute: typeof AgentTeammatesRouteImport
+      parentRoute: typeof AgentRoute
+    }
+    '/agent/skills': {
+      id: '/agent/skills'
+      path: '/skills'
+      fullPath: '/agent/skills'
+      preLoaderRoute: typeof AgentSkillsRouteImport
       parentRoute: typeof AgentRoute
     }
     '/agent/hub': {

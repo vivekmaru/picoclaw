@@ -404,13 +404,31 @@
         "task_detail_loading": "正在加载最新任务详情...",
         "task_cancel_success": "已为 {{id}} 发起取消请求。",
         "task_cancel_error": "取消所选任务失败。",
+        "task_approve_success": "已批准任务 {{id}}。",
+        "task_approve_error": "批准所选任务失败。",
+        "task_reject_success": "已拒绝任务 {{id}}。",
+        "task_reject_error": "拒绝所选任务失败。",
+        "memory_review_title": "记忆审核队列",
+        "memory_review_description": "将已完成任务的结果提升为共享记忆或队友记忆候选项，并明确批准或拒绝。",
+        "memory_review_empty": "当前没有待审核的记忆提案。",
+        "memory_detail_title": "记忆提案详情",
+        "memory_detail_description": "在写入长期记忆之前先检查提议内容。",
+        "memory_detail_empty": "请选择一个记忆提案以查看详情。",
+        "memory_proposal_create_success": "已创建记忆提案 {{id}}。",
+        "memory_proposal_create_error": "从所选任务创建记忆提案失败。",
+        "memory_proposal_approve_success": "已批准记忆提案 {{id}}。",
+        "memory_proposal_approve_error": "批准所选记忆提案失败。",
+        "memory_proposal_reject_success": "已拒绝记忆提案 {{id}}。",
+        "memory_proposal_reject_error": "拒绝所选记忆提案失败。",
         "summary": {
           "agents": "Agents",
           "agents_desc": "当前注册的运行单元数量。",
           "teammates": "队友",
           "teammates_desc": "当前可用于委派的队友配置数量。",
           "tasks": "任务",
-          "tasks_desc": "当前已跟踪的委派任务数量。"
+          "tasks_desc": "当前已跟踪的委派任务数量。",
+          "memory_proposals": "记忆提案",
+          "memory_proposals_desc": "从队友任务结果生成并等待审核的记忆候选项。"
         },
         "filters": {
           "status_all": "全部状态",
@@ -419,7 +437,16 @@
         },
         "task_actions": {
           "cancel": "取消任务",
-          "canceling": "取消中..."
+          "canceling": "取消中...",
+          "approve": "批准任务",
+          "reject": "拒绝任务"
+        },
+        "memory_actions": {
+          "title": "提交到记忆审核",
+          "shared": "提交到共享记忆",
+          "teammate": "提交到队友记忆",
+          "approve": "批准记忆",
+          "reject": "拒绝记忆"
         },
         "fields": {
           "agent": "Agent",
@@ -432,6 +459,8 @@
         "task_fields": {
           "requester": "请求方",
           "agent": "目标 Agent",
+          "approval_policy": "审批策略",
+          "review_note": "审核备注",
           "memory": "记忆作用域",
           "status": "状态",
           "channel": "来源频道",
@@ -440,8 +469,21 @@
           "created": "创建时间",
           "started": "开始时间",
           "completed": "完成时间",
+          "approved": "已批准",
+          "rejected": "已拒绝",
           "workspaces": "工作区范围",
           "result": "结果"
+        },
+        "memory_fields": {
+          "scope": "作用域",
+          "target": "目标",
+          "kind": "类型",
+          "status": "状态",
+          "source_task": "来源任务",
+          "source_teammate": "来源队友",
+          "created": "创建时间",
+          "reviewed": "审核信息",
+          "content": "内容"
         }
       },
       "skills": {

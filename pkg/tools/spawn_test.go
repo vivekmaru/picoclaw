@@ -272,3 +272,115 @@ func TestSubagentManager_CancelTaskPersistsState(t *testing.T) {
 		t.Fatalf("persisted task store missing canceled status: %s", string(data))
 	}
 }
+
+func TestSubagentManager_ApprovalWorkflow(t *testing.T) {
+	workspace := t.TempDir()
+	manager := NewSubagentManager(&MockLLMProvider{}, "test-model", workspace)
+	manager.SetTeammateResolver(func(teammateID string) (TaskTeammate, bool) {
+		if teammateID != "operator" {
+			return TaskTeammate{}, false
+		}
+		return TaskTeammate{
+			ID:             "operator",
+			AgentID:        "main",
+			MemoryScope:    "teammate:operator",
+			ApprovalPolicy: "confirm_exec",
+		}, true
+	})
+
+	started := make(chan struct{})
+	manager.SetSpawner(func(
+		ctx context.Context,
+		task, label, agentID, teammateID string,
+		tls *ToolRegistry,
+		maxTokens int,
+		temperature float64,
+		hasMaxTokens, hasTemperature bool,
+	) (*ToolResult, error) {
+		close(started)
+		return &ToolResult{ForLLM: "approved execution"}, nil
+	})
+
+	task, err := manager.Spawn(context.Background(), SpawnRequest{
+		Task:       "Restart the service",
+		TeammateID: "operator",
+	}, nil)
+	if err != nil {
+		t.Fatalf("Spawn() error = %v", err)
+	}
+	if task.Status != "awaiting_approval" {
+		t.Fatalf("task.Status = %q, want awaiting_approval", task.Status)
+	}
+
+	select {
+	case <-started:
+		t.Fatal("task should not start before approval")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	approved, err := manager.ApproveTask(task.ID, "launcher", "")
+	if err != nil {
+		t.Fatalf("ApproveTask() error = %v", err)
+	}
+	if approved.Status != "queued" {
+		t.Fatalf("ApproveTask() status = %q, want queued", approved.Status)
+	}
+
+	<-started
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		current, ok := manager.GetTaskCopy(task.ID)
+		if !ok {
+			t.Fatalf("task %s disappeared", task.ID)
+		}
+		if current.Status == "completed" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("task %s did not complete after approval, status=%s", task.ID, current.Status)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestSubagentManager_RejectTask(t *testing.T) {
+	workspace := t.TempDir()
+	manager := NewSubagentManager(&MockLLMProvider{}, "test-model", workspace)
+	manager.SetTeammateResolver(func(teammateID string) (TaskTeammate, bool) {
+		return TaskTeammate{
+			ID:             teammateID,
+			AgentID:        "main",
+			ApprovalPolicy: "advice_only",
+		}, true
+	})
+	manager.SetSpawner(func(
+		ctx context.Context,
+		task, label, agentID, teammateID string,
+		tls *ToolRegistry,
+		maxTokens int,
+		temperature float64,
+		hasMaxTokens, hasTemperature bool,
+	) (*ToolResult, error) {
+		t.Fatal("spawner should not run for rejected task")
+		return nil, nil
+	})
+
+	task, err := manager.Spawn(context.Background(), SpawnRequest{
+		Task:       "Do not run this",
+		TeammateID: "reviewer",
+	}, nil)
+	if err != nil {
+		t.Fatalf("Spawn() error = %v", err)
+	}
+
+	rejected, err := manager.RejectTask(task.ID, "launcher", "Rejected in review")
+	if err != nil {
+		t.Fatalf("RejectTask() error = %v", err)
+	}
+	if rejected.Status != "denied" {
+		t.Fatalf("RejectTask() status = %q, want denied", rejected.Status)
+	}
+	if rejected.RejectedBy != "launcher" {
+		t.Fatalf("RejectTask() rejected_by = %q, want launcher", rejected.RejectedBy)
+	}
+}
