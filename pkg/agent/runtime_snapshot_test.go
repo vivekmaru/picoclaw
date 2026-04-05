@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -276,12 +277,33 @@ func TestAgentLoopRuntimeApprovalAndMemoryReview(t *testing.T) {
 		t.Fatalf("proposal.Status = %q, want pending", proposal.Status)
 	}
 
-	approvedProposal, err := loop.ApproveRuntimeMemoryProposal("main", proposal.ID, "launcher", "")
+	updatedProposal, err := loop.UpdateRuntimeMemoryProposal("main", proposal.ID, "operator", MemoryProposalUpdate{
+		Scope:   "teammate:operator",
+		Title:   "Approved server runbook",
+		Content: "Capture the approved server runbook in teammate memory.",
+	})
+	if err != nil {
+		t.Fatalf("UpdateRuntimeMemoryProposal() error = %v", err)
+	}
+	if updatedProposal.Scope != "teammate:operator" {
+		t.Fatalf("updatedProposal.Scope = %q, want teammate:operator", updatedProposal.Scope)
+	}
+	if updatedProposal.UpdatedBy != "operator" {
+		t.Fatalf("updatedProposal.UpdatedBy = %q, want operator", updatedProposal.UpdatedBy)
+	}
+
+	approvedProposal, err := loop.ApproveRuntimeMemoryProposal("main", proposal.ID, "launcher", "Ship this")
 	if err != nil {
 		t.Fatalf("ApproveRuntimeMemoryProposal() error = %v", err)
 	}
 	if approvedProposal.Status != "approved" {
 		t.Fatalf("approvedProposal.Status = %q, want approved", approvedProposal.Status)
+	}
+	if approvedProposal.ReviewedBy != "launcher" {
+		t.Fatalf("approvedProposal.ReviewedBy = %q, want launcher", approvedProposal.ReviewedBy)
+	}
+	if approvedProposal.ReviewNote != "Ship this" {
+		t.Fatalf("approvedProposal.ReviewNote = %q, want Ship this", approvedProposal.ReviewNote)
 	}
 
 	snapshot := loop.GetRuntimeSnapshot()
@@ -290,5 +312,42 @@ func TestAgentLoopRuntimeApprovalAndMemoryReview(t *testing.T) {
 	}
 	if snapshot.MemoryProposals[0].Status != "approved" {
 		t.Fatalf("snapshot.MemoryProposals[0].Status = %q, want approved", snapshot.MemoryProposals[0].Status)
+	}
+}
+
+func TestUpdateRuntimeMemoryProposal_PreservesValidationErrors(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Agents.Defaults.Workspace = t.TempDir()
+	cfg.Tools.Subagent.Enabled = true
+	cfg.Tools.Spawn.Enabled = true
+	cfg.Tools.SpawnStatus.Enabled = true
+	cfg.Agents.List = []config.AgentConfig{
+		{ID: "main", Default: true, Name: "Main"},
+	}
+
+	loop := NewAgentLoop(cfg, bus.NewMessageBus(), &mockProvider{})
+	t.Cleanup(func() {
+		loop.GetRegistry().Close()
+	})
+
+	proposalStore := runtimeMemoryProposalStoreForAgent(loop.GetRegistry(), "main")
+	if proposalStore == nil {
+		t.Fatal("expected proposal store for main agent")
+	}
+	proposal, err := proposalStore.Create(MemoryProposalRequest{
+		Scope:   "shared",
+		Target:  "long_term",
+		Content: "remember this",
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	_, err = loop.UpdateRuntimeMemoryProposal("main", proposal.ID, "operator", MemoryProposalUpdate{
+		Scope:   "shared",
+		Content: "   ",
+	})
+	if !errors.Is(err, ErrRuntimeMemoryProposalInvalid) {
+		t.Fatalf("UpdateRuntimeMemoryProposal() error = %v, want ErrRuntimeMemoryProposalInvalid", err)
 	}
 }

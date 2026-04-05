@@ -445,8 +445,15 @@
           "title": "Promote To Memory Review",
           "shared": "Propose To Shared Memory",
           "teammate": "Propose To Teammate Memory",
+          "save": "Save Proposal Draft",
           "approve": "Approve Memory",
           "reject": "Reject Memory"
+        },
+        "review_fields": {
+          "actor": "Reviewer",
+          "actor_placeholder": "launcher",
+          "note": "Review Note",
+          "note_placeholder": "Why this should be approved, rejected, or edited"
         },
         "fields": {
           "agent": "Agent",
@@ -479,12 +486,18 @@
           "target": "Target",
           "kind": "Kind",
           "status": "Status",
+          "title": "Title",
+          "title_placeholder": "Memory summary",
           "source_task": "Source Task",
           "source_teammate": "Source Teammate",
           "created": "Created",
+          "updated": "Last Edited",
           "reviewed": "Reviewed",
+          "review_note": "Review Note",
           "content": "Content"
-        }
+        },
+        "memory_proposal_update_success": "Updated memory proposal {{id}}.",
+        "memory_proposal_update_error": "Failed to update the selected memory proposal."
       },
       "skills": {
         "empty": "No skills are currently available.",

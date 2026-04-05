@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,11 @@ import (
 	"time"
 
 	"github.com/sipeed/picoclaw/pkg/fileutil"
+)
+
+var (
+	errMemoryProposalNotPending = errors.New("memory proposal not pending")
+	errMemoryProposalInvalid    = errors.New("invalid memory proposal")
 )
 
 type MemoryProposal struct {
@@ -27,6 +33,8 @@ type MemoryProposal struct {
 	RequesterAgentID    string `json:"requester_agent_id,omitempty"`
 	RequesterTeammateID string `json:"requester_teammate_id,omitempty"`
 	Created             int64  `json:"created"`
+	UpdatedAt           int64  `json:"updated_at,omitempty"`
+	UpdatedBy           string `json:"updated_by,omitempty"`
 	ReviewedAt          int64  `json:"reviewed_at,omitempty"`
 	ReviewedBy          string `json:"reviewed_by,omitempty"`
 	ReviewNote          string `json:"review_note,omitempty"`
@@ -43,6 +51,12 @@ type MemoryProposalRequest struct {
 	SourceTeammateID    string
 	RequesterAgentID    string
 	RequesterTeammateID string
+}
+
+type MemoryProposalUpdate struct {
+	Scope   string
+	Title   string
+	Content string
 }
 
 type memoryProposalStoreFile struct {
@@ -168,7 +182,7 @@ func (s *MemoryProposalStore) Approve(id, actor, note string) (MemoryProposal, e
 		return MemoryProposal{}, fmt.Errorf("memory proposal %q not found", id)
 	}
 	if proposal.Status != "pending" {
-		return MemoryProposal{}, fmt.Errorf("memory proposal %q is not pending", id)
+		return MemoryProposal{}, fmt.Errorf("%w: memory proposal %q is not pending", errMemoryProposalNotPending, id)
 	}
 
 	mem := NewMemoryStoreForScope(s.workspace, proposal.Scope)
@@ -186,6 +200,38 @@ func (s *MemoryProposalStore) Approve(id, actor, note string) (MemoryProposal, e
 	return *proposal, nil
 }
 
+func (s *MemoryProposalStore) Update(id, actor string, update MemoryProposalUpdate) (MemoryProposal, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	proposal, ok := s.proposals[id]
+	if !ok {
+		return MemoryProposal{}, fmt.Errorf("memory proposal %q not found", id)
+	}
+	if proposal.Status != "pending" {
+		return MemoryProposal{}, fmt.Errorf("%w: memory proposal %q is not pending", errMemoryProposalNotPending, id)
+	}
+
+	scope := strings.TrimSpace(update.Scope)
+	if scope == "" {
+		return MemoryProposal{}, fmt.Errorf("%w: memory proposal scope is required", errMemoryProposalInvalid)
+	}
+	content := strings.TrimSpace(update.Content)
+	if content == "" {
+		return MemoryProposal{}, fmt.Errorf("%w: memory proposal content is required", errMemoryProposalInvalid)
+	}
+
+	proposal.Scope = scope
+	proposal.Title = strings.TrimSpace(update.Title)
+	proposal.Content = content
+	proposal.UpdatedAt = time.Now().UnixMilli()
+	proposal.UpdatedBy = defaultReviewActor(actor)
+	if err := s.persistLocked(); err != nil {
+		return MemoryProposal{}, err
+	}
+	return *proposal, nil
+}
+
 func (s *MemoryProposalStore) Reject(id, actor, note string) (MemoryProposal, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -195,7 +241,7 @@ func (s *MemoryProposalStore) Reject(id, actor, note string) (MemoryProposal, er
 		return MemoryProposal{}, fmt.Errorf("memory proposal %q not found", id)
 	}
 	if proposal.Status != "pending" {
-		return MemoryProposal{}, fmt.Errorf("memory proposal %q is not pending", id)
+		return MemoryProposal{}, fmt.Errorf("%w: memory proposal %q is not pending", errMemoryProposalNotPending, id)
 	}
 
 	proposal.Status = "rejected"

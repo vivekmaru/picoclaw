@@ -45,6 +45,8 @@ export interface AgentRuntimeMemoryProposal {
   requester_agent_id?: string
   requester_teammate_id?: string
   created: number
+  updated_at?: number
+  updated_by?: string
   reviewed_at?: number
   reviewed_by?: string
   review_note?: string
@@ -126,10 +128,16 @@ export async function cancelAgentRuntimeTask(
 export async function approveAgentRuntimeTask(
   ownerAgentID: string,
   taskID: string,
+  actor: string,
+  note: string,
 ): Promise<AgentRuntimeTask> {
   const res = await launcherFetch(
     `/api/agent/runtime/tasks/${encodeURIComponent(ownerAgentID)}/${encodeURIComponent(taskID)}/approve`,
-    { method: "POST" },
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ actor, note }),
+    },
   )
   if (!res.ok) {
     const message = (await res.text()) || `API error: ${res.status}`
@@ -141,10 +149,16 @@ export async function approveAgentRuntimeTask(
 export async function rejectAgentRuntimeTask(
   ownerAgentID: string,
   taskID: string,
+  actor: string,
+  note: string,
 ): Promise<AgentRuntimeTask> {
   const res = await launcherFetch(
     `/api/agent/runtime/tasks/${encodeURIComponent(ownerAgentID)}/${encodeURIComponent(taskID)}/reject`,
-    { method: "POST" },
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ actor, note }),
+    },
   )
   if (!res.ok) {
     const message = (await res.text()) || `API error: ${res.status}`
@@ -173,13 +187,39 @@ export async function createAgentRuntimeMemoryProposal(
   return res.json() as Promise<AgentRuntimeMemoryProposal>
 }
 
+export async function updateAgentRuntimeMemoryProposal(
+  ownerAgentID: string,
+  proposalID: string,
+  payload: { actor: string; scope: string; title: string; content: string },
+): Promise<AgentRuntimeMemoryProposal> {
+  const res = await launcherFetch(
+    `/api/agent/runtime/memory-proposals/${encodeURIComponent(ownerAgentID)}/${encodeURIComponent(proposalID)}/update`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  )
+  if (!res.ok) {
+    const message = (await res.text()) || `API error: ${res.status}`
+    throw new Error(message)
+  }
+  return res.json() as Promise<AgentRuntimeMemoryProposal>
+}
+
 export async function approveAgentRuntimeMemoryProposal(
   ownerAgentID: string,
   proposalID: string,
+  actor: string,
+  note: string,
 ): Promise<AgentRuntimeMemoryProposal> {
   const res = await launcherFetch(
     `/api/agent/runtime/memory-proposals/${encodeURIComponent(ownerAgentID)}/${encodeURIComponent(proposalID)}/approve`,
-    { method: "POST" },
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ actor, note }),
+    },
   )
   if (!res.ok) {
     const message = (await res.text()) || `API error: ${res.status}`
@@ -191,10 +231,16 @@ export async function approveAgentRuntimeMemoryProposal(
 export async function rejectAgentRuntimeMemoryProposal(
   ownerAgentID: string,
   proposalID: string,
+  actor: string,
+  note: string,
 ): Promise<AgentRuntimeMemoryProposal> {
   const res = await launcherFetch(
     `/api/agent/runtime/memory-proposals/${encodeURIComponent(ownerAgentID)}/${encodeURIComponent(proposalID)}/reject`,
-    { method: "POST" },
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ actor, note }),
+    },
   )
   if (!res.ok) {
     const message = (await res.text()) || `API error: ${res.status}`

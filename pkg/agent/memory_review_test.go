@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -64,5 +65,66 @@ func TestMemoryProposalStore_RejectKeepsMemoryUnchanged(t *testing.T) {
 	mem := NewMemoryStore(workspace)
 	if got := mem.ReadLongTerm(); got != "" {
 		t.Fatalf("shared memory should remain empty after rejection, got %q", got)
+	}
+}
+
+func TestMemoryProposalStore_UpdatePendingProposal(t *testing.T) {
+	workspace := t.TempDir()
+	store := NewMemoryProposalStore(workspace)
+
+	proposal, err := store.Create(MemoryProposalRequest{
+		Scope:   "shared",
+		Target:  "long_term",
+		Title:   "Original",
+		Content: "Original content",
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	updated, err := store.Update(proposal.ID, "operator", MemoryProposalUpdate{
+		Scope:   "teammate:reviewer",
+		Title:   "Edited Title",
+		Content: "Edited content",
+	})
+	if err != nil {
+		t.Fatalf("Update() error = %v", err)
+	}
+	if updated.Scope != "teammate:reviewer" {
+		t.Fatalf("updated.Scope = %q, want teammate:reviewer", updated.Scope)
+	}
+	if updated.Title != "Edited Title" {
+		t.Fatalf("updated.Title = %q, want Edited Title", updated.Title)
+	}
+	if updated.Content != "Edited content" {
+		t.Fatalf("updated.Content = %q, want Edited content", updated.Content)
+	}
+	if updated.UpdatedBy != "operator" {
+		t.Fatalf("updated.UpdatedBy = %q, want operator", updated.UpdatedBy)
+	}
+	if updated.UpdatedAt == 0 {
+		t.Fatal("updated.UpdatedAt should be set")
+	}
+}
+
+func TestMemoryProposalStore_UpdatePendingProposalRejectsBlankContent(t *testing.T) {
+	workspace := t.TempDir()
+	store := NewMemoryProposalStore(workspace)
+
+	proposal, err := store.Create(MemoryProposalRequest{
+		Scope:   "shared",
+		Target:  "long_term",
+		Content: "Original content",
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	_, err = store.Update(proposal.ID, "operator", MemoryProposalUpdate{
+		Scope:   "shared",
+		Content: "   ",
+	})
+	if !errors.Is(err, errMemoryProposalInvalid) {
+		t.Fatalf("Update() error = %v, want errMemoryProposalInvalid", err)
 	}
 }
