@@ -267,3 +267,59 @@ func TestLoadStoreMigratesLegacyPlaintext(t *testing.T) {
 		t.Fatalf("legacy auth.json should be migrated to encrypted format: %s", string(data))
 	}
 }
+
+func TestLoadStoreRejectsInvalidEnvelopeShapedJSON(t *testing.T) {
+	tmpDir := t.TempDir()
+	origHome := os.Getenv("HOME")
+	t.Setenv("HOME", tmpDir)
+	defer os.Setenv("HOME", origHome)
+
+	path := filepath.Join(tmpDir, ".picoclaw", "auth.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	invalidEnvelope := `{
+  "version": 1,
+  "nonce": "",
+  "ciphertext": ""
+}`
+	if err := os.WriteFile(path, []byte(invalidEnvelope), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := LoadStore(); err == nil {
+		t.Fatal("LoadStore() should reject invalid envelope-shaped json")
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != invalidEnvelope {
+		t.Fatalf("auth.json should not be rewritten on invalid envelope, got: %s", string(data))
+	}
+}
+
+func TestLoadStoreRejectsUnsupportedEnvelopeVersion(t *testing.T) {
+	tmpDir := t.TempDir()
+	origHome := os.Getenv("HOME")
+	t.Setenv("HOME", tmpDir)
+	defer os.Setenv("HOME", origHome)
+
+	path := filepath.Join(tmpDir, ".picoclaw", "auth.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	data := `{
+  "version": 99,
+  "nonce": "abc",
+  "ciphertext": "def"
+}`
+	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := LoadStore(); err == nil || !strings.Contains(err.Error(), "unsupported auth store envelope version") {
+		t.Fatalf("LoadStore() error = %v, want unsupported envelope version", err)
+	}
+}

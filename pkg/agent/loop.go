@@ -119,17 +119,18 @@ func (al *AgentLoop) trustPolicyDenyReason(toolName string) string {
 	if al == nil {
 		return ""
 	}
+	hasApprover := al.hooks != nil && al.hooks.HasToolApprover()
 	switch al.cfg.Trust.EffectiveApprovalPolicy() {
 	case config.ApprovalPolicyAdviceOnly:
 		if isWriteTool(toolName) || toolName == "exec" {
 			return "approval_policy=advice_only blocks write and exec tools"
 		}
 	case config.ApprovalPolicyConfirmWrite:
-		if isWriteTool(toolName) {
+		if isWriteTool(toolName) && !hasApprover {
 			return "approval_policy=confirm_write blocks write tools until an explicit approver is configured"
 		}
 	case config.ApprovalPolicyConfirmExec:
-		if toolName == "exec" {
+		if toolName == "exec" && !hasApprover {
 			return "approval_policy=confirm_exec blocks exec until an explicit approver is configured"
 		}
 	}

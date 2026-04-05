@@ -163,13 +163,24 @@ func encodeAuthStore(store *AuthStore) ([]byte, error) {
 
 func decodeAuthStore(data []byte) (*AuthStore, bool, error) {
 	var env authStoreEnvelope
-	if err := json.Unmarshal(data, &env); err == nil && env.Version == authStoreEnvelopeVersion &&
-		env.Nonce != "" && env.Ciphertext != "" {
-		store, err := decryptAuthStoreEnvelope(&env)
-		if err != nil {
-			return nil, false, err
+	if err := json.Unmarshal(data, &env); err == nil {
+		if looksLikeAuthStoreEnvelope(env) {
+			if env.Version != authStoreEnvelopeVersion {
+				return nil, false, fmt.Errorf(
+					"unsupported auth store envelope version: got %d, want %d",
+					env.Version,
+					authStoreEnvelopeVersion,
+				)
+			}
+			if env.Nonce == "" || env.Ciphertext == "" {
+				return nil, false, fmt.Errorf("invalid auth store envelope")
+			}
+			store, err := decryptAuthStoreEnvelope(&env)
+			if err != nil {
+				return nil, false, err
+			}
+			return store, false, nil
 		}
-		return store, false, nil
 	}
 
 	var store AuthStore
@@ -178,6 +189,10 @@ func decodeAuthStore(data []byte) (*AuthStore, bool, error) {
 	}
 	normalizeAuthStore(&store)
 	return &store, true, nil
+}
+
+func looksLikeAuthStoreEnvelope(env authStoreEnvelope) bool {
+	return env.Version != 0 || env.Nonce != "" || env.Ciphertext != ""
 }
 
 func decryptAuthStoreEnvelope(env *authStoreEnvelope) (*AuthStore, error) {
