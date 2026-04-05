@@ -152,6 +152,12 @@ func DefaultConfig() *Config {
 				ApprovalTimeoutMS:    60000,
 			},
 		},
+		Trust: TrustConfig{
+			ApprovalPolicy: ApprovalPolicyAllowTrusted,
+			Audit: AuditConfig{
+				Enabled: true,
+			},
+		},
 		ModelList: []*ModelConfig{
 			// ============================================
 			// Add your API key to the model you want to use

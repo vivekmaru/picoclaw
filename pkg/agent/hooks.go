@@ -451,6 +451,18 @@ func (hm *HookManager) ApproveTool(ctx context.Context, req *ToolApprovalRequest
 	return ApprovalDecision{Approved: true}
 }
 
+func (hm *HookManager) HasToolApprover() bool {
+	if hm == nil {
+		return false
+	}
+	for _, reg := range hm.snapshotHooks() {
+		if _, ok := reg.Hook.(ToolApprover); ok {
+			return true
+		}
+	}
+	return false
+}
+
 func (hm *HookManager) rebuildOrdered() {
 	hm.ordered = hm.ordered[:0]
 	for _, reg := range hm.hooks {

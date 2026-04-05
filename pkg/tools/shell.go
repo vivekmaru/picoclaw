@@ -18,6 +18,7 @@ import (
 
 	"github.com/creack/pty"
 
+	"github.com/sipeed/picoclaw/pkg/audit"
 	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/constants"
 )
@@ -40,8 +41,11 @@ type ExecTool struct {
 	allowPatterns       []*regexp.Regexp
 	customAllowPatterns []*regexp.Regexp
 	allowedPathPatterns []*regexp.Regexp
+	allowedExecTargets  []*regexp.Regexp
+	allowedWorkspaces   []*regexp.Regexp
 	restrictToWorkspace bool
 	allowRemote         bool
+	auditLogger         *audit.Logger
 	sessionManager      *SessionManager
 }
 
@@ -111,6 +115,8 @@ var (
 		"/dev/stdout":  true,
 		"/dev/stderr":  true,
 	}
+
+	envAssignmentPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)
 )
 
 func NewExecTool(workingDir string, restrict bool, allowPaths ...[]*regexp.Regexp) (*ExecTool, error) {
@@ -126,7 +132,10 @@ func NewExecToolWithConfig(
 	denyPatterns := make([]*regexp.Regexp, 0)
 	customAllowPatterns := make([]*regexp.Regexp, 0)
 	var allowedPathPatterns []*regexp.Regexp
+	allowedExecTargets := make([]*regexp.Regexp, 0)
+	allowedWorkspaces := make([]*regexp.Regexp, 0)
 	allowRemote := true
+	var auditLogger *audit.Logger
 	if len(allowPaths) > 0 {
 		allowedPathPatterns = allowPaths[0]
 	}
@@ -158,6 +167,21 @@ func NewExecToolWithConfig(
 			}
 			customAllowPatterns = append(customAllowPatterns, re)
 		}
+		for _, pattern := range config.Trust.AllowedExecTargets {
+			re, err := regexp.Compile(pattern)
+			if err != nil {
+				return nil, fmt.Errorf("invalid allowed exec target pattern %q: %w", pattern, err)
+			}
+			allowedExecTargets = append(allowedExecTargets, re)
+		}
+		for _, pattern := range config.Trust.AllowedWorkspaces {
+			re, err := regexp.Compile(pattern)
+			if err != nil {
+				return nil, fmt.Errorf("invalid allowed workspace pattern %q: %w", pattern, err)
+			}
+			allowedWorkspaces = append(allowedWorkspaces, re)
+		}
+		auditLogger = audit.NewLogger(config.Trust)
 	} else {
 		denyPatterns = append(denyPatterns, defaultDenyPatterns...)
 	}
@@ -174,8 +198,11 @@ func NewExecToolWithConfig(
 		allowPatterns:       nil,
 		customAllowPatterns: customAllowPatterns,
 		allowedPathPatterns: allowedPathPatterns,
+		allowedExecTargets:  allowedExecTargets,
+		allowedWorkspaces:   allowedWorkspaces,
 		restrictToWorkspace: restrict,
 		allowRemote:         allowRemote,
+		auditLogger:         auditLogger,
 		sessionManager:      getSessionManager(),
 	}, nil
 }
@@ -275,6 +302,9 @@ func (t *ExecTool) executeRun(ctx context.Context, args map[string]any) *ToolRes
 		}
 		channel = strings.TrimSpace(channel)
 		if channel == "" || !constants.IsInternalChannel(channel) {
+			t.writeAudit(ctx, "tool.exec.denied", "denied", "exec is restricted to internal channels", map[string]any{
+				"command": command,
+			})
 			return ErrorResult("exec is restricted to internal channels")
 		}
 	}
@@ -316,8 +346,19 @@ func (t *ExecTool) executeRun(ctx context.Context, args map[string]any) *ToolRes
 			cwd = wd
 		}
 	}
+	if errMsg := t.guardWorkspace(cwd); errMsg != "" {
+		t.writeAudit(ctx, "tool.exec.denied", "denied", errMsg, map[string]any{
+			"command": command,
+			"cwd":     cwd,
+		})
+		return ErrorResult(errMsg)
+	}
 
 	if guardError := t.guardCommand(command, cwd); guardError != "" {
+		t.writeAudit(ctx, "tool.exec.denied", "denied", guardError, map[string]any{
+			"command": command,
+			"cwd":     cwd,
+		})
 		return ErrorResult(guardError)
 	}
 
@@ -446,12 +487,20 @@ func (t *ExecTool) runSync(ctx context.Context, command, cwd string) *ToolResult
 	}
 
 	if err != nil {
+		t.writeAudit(ctx, "tool.exec.completed", "failed", err.Error(), map[string]any{
+			"command": command,
+			"cwd":     cwd,
+		})
 		return &ToolResult{
 			ForLLM:  output,
 			ForUser: output,
 			IsError: true,
 		}
 	}
+	t.writeAudit(ctx, "tool.exec.completed", "executed", "", map[string]any{
+		"command": command,
+		"cwd":     cwd,
+	})
 
 	return &ToolResult{
 		ForLLM:  output,
@@ -525,8 +574,19 @@ func (t *ExecTool) runBackground(ctx context.Context, command, cwd string, ptyEn
 		if session.ptyMaster != nil {
 			session.ptyMaster.Close()
 		}
+		t.writeAudit(ctx, "tool.exec.completed", "failed", err.Error(), map[string]any{
+			"command": command,
+			"cwd":     cwd,
+		})
 		return ErrorResult(fmt.Sprintf("failed to start command: %v", err))
 	}
+	t.writeAudit(ctx, "tool.exec.completed", "executed", "", map[string]any{
+		"command":    command,
+		"cwd":        cwd,
+		"background": true,
+		"pty":        ptyEnabled,
+		"session_id": sessionID,
+	})
 
 	session.PID = cmd.Process.Pid
 	t.sessionManager.Add(session)
@@ -1017,6 +1077,12 @@ func (t *ExecTool) executeSendKeys(args map[string]any) *ToolResult {
 func (t *ExecTool) guardCommand(command, cwd string) string {
 	cmd := strings.TrimSpace(command)
 	lower := strings.ToLower(cmd)
+	if len(t.allowedExecTargets) > 0 {
+		target := extractExecTarget(cmd)
+		if target == "" || !matchesAnyPattern(target, t.allowedExecTargets) {
+			return "Command blocked by trust policy (execution target is not allowed)"
+		}
+	}
 
 	// Custom allow patterns exempt a command from deny checks.
 	explicitlyAllowed := false
@@ -1113,6 +1179,108 @@ func (t *ExecTool) guardCommand(command, cwd string) string {
 	}
 
 	return ""
+}
+
+func (t *ExecTool) guardWorkspace(cwd string) string {
+	if len(t.allowedWorkspaces) == 0 || strings.TrimSpace(cwd) == "" {
+		return ""
+	}
+	absPath, err := filepath.Abs(cwd)
+	if err != nil {
+		return ""
+	}
+	if matchesAnyPattern(absPath, t.allowedWorkspaces) {
+		return ""
+	}
+	return "Command blocked by trust policy (workspace is not allowed)"
+}
+
+func (t *ExecTool) writeAudit(
+	ctx context.Context,
+	event, decision, reason string,
+	metadata map[string]any,
+) {
+	if t.auditLogger == nil {
+		return
+	}
+	_ = t.auditLogger.Write(audit.Entry{
+		Event:    event,
+		Tool:     t.Name(),
+		Decision: decision,
+		Reason:   reason,
+		Channel:  ToolChannel(ctx),
+		ChatID:   ToolChatID(ctx),
+		Metadata: metadata,
+	})
+}
+
+func matchesAnyPattern(value string, patterns []*regexp.Regexp) bool {
+	for _, pattern := range patterns {
+		if pattern.MatchString(value) {
+			return true
+		}
+	}
+	return false
+}
+
+func extractExecTarget(command string) string {
+	for _, field := range splitShellWords(command) {
+		if envAssignmentPattern.MatchString(field) && !strings.HasPrefix(field, "/") {
+			continue
+		}
+		if field == "" {
+			continue
+		}
+		target := filepath.Base(field)
+		if target == "env" {
+			continue
+		}
+		return target
+	}
+	return ""
+}
+
+func splitShellWords(command string) []string {
+	var words []string
+	var current strings.Builder
+	var quote rune
+	escaped := false
+
+	flush := func() {
+		if current.Len() == 0 {
+			return
+		}
+		words = append(words, current.String())
+		current.Reset()
+	}
+
+	for _, r := range command {
+		switch {
+		case escaped:
+			current.WriteRune(r)
+			escaped = false
+		case r == '\\' && quote != '\'':
+			escaped = true
+		case quote != 0:
+			if r == quote {
+				quote = 0
+			} else {
+				current.WriteRune(r)
+			}
+		case r == '\'' || r == '"':
+			quote = r
+		case r == ' ' || r == '\t' || r == '\n' || r == '\r':
+			flush()
+		default:
+			current.WriteRune(r)
+		}
+	}
+
+	if escaped {
+		current.WriteRune('\\')
+	}
+	flush()
+	return words
 }
 
 func (t *ExecTool) SetTimeout(timeout time.Duration) {

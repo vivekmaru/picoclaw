@@ -73,13 +73,57 @@ PicoClaw stores data in your configured workspace (default: `~/.picoclaw/workspa
 
 **picoclaw-launcher** serves a browser UI that requires sign-in first. By default, the **dashboard token** and **session signing key** are **generated in memory on each start** (a new random token after every restart). Set **`PICOCLAW_LAUNCHER_TOKEN`** to pin a fixed token for that process (startup logs do not print the secret when this env var is used).
 
-**Where to read the token**: In **console mode** (`-console`), it is printed at startup. In **tray / GUI mode**, use the tray action **Copy dashboard token**, and check **`$PICOCLAW_HOME/logs/launcher.log`** (typically `~/.picoclaw/logs/launcher.log` if `PICOCLAW_HOME` is unset) for the random token logged on startup. The login page shows hints that match how the launcher is running (including the absolute log path); **responses do not include the token itself**.
+**Where to read the token**: In **console mode** (`-console`), it is printed at startup. In **tray / GUI mode**, use the tray action **Copy dashboard token**. The login page shows hints that match how the launcher is running; **responses do not include the token itself**.
+
+Security note: the launcher token flow is designed for local/private
+administration. The auto-open browser convenience path now uses a **one-time
+bootstrap code in the URL fragment** and redeems it through a loopback-only
+`POST /api/auth/bootstrap` exchange. GUI mode no longer writes generated tokens
+into the launcher log. Prefer a strong pinned `PICOCLAW_LAUNCHER_TOKEN` when
+the launcher is network-reachable.
+
+Separate note: config-managed secrets can be encrypted with `enc://`, but
+provider auth credentials stored by `picoclaw auth` now live in an encrypted
+`~/.picoclaw/auth.json` envelope backed by `~/.picoclaw/auth.key`. Treat both
+files as sensitive local state.
 
 - **Config file**: Same directory as `config.json` (or the file pointed to by `PICOCLAW_CONFIG`). The launcher-specific file is `launcher-config.json`.
-- **Sign-in and links**: Enter the token on the login page, or open with `?token=` when the browser is launched automatically. All responses include **`Referrer-Policy: no-referrer`** to reduce leakage of `token` via the `Referer` header.
+- **Sign-in and links**: Enter the token on the login page, or use the one-time fragment bootstrap when the browser is launched automatically. All responses include **`Referrer-Policy: no-referrer`**.
 - **Sign-out**: Use **`POST /api/auth/logout`** with **`Content-Type: application/json`** (body may be `{}`). Do not rely on a GET URL for logout (CSRF-safe pattern).
 - **Brute-force**: **`POST /api/auth/login`** is **rate-limited per client IP per minute** (HTTP 429 when exceeded).
 - **Session lifetime**: The HttpOnly session cookie lasts about **7 days** by default; sign in again with the token after it expires.
+
+### Trust Policy And CLI Execution Mode
+
+Phase 1 trust controls are now available in `config.json`:
+
+```json
+{
+  "trust": {
+    "approval_policy": "confirm_exec",
+    "allowed_exec_targets": ["^git$", "^go$", "^npm$"],
+    "allowed_workspaces": ["^/srv/picoclaw/workspace(?:/|$)"],
+    "audit": {
+      "enabled": true,
+      "path": "~/.picoclaw/logs/audit.jsonl"
+    }
+  },
+  "model_list": [
+    {
+      "model_name": "codex-main",
+      "model": "codex-cli/gpt-5.3-codex",
+      "workspace": "/srv/picoclaw/workspace/repo-a",
+      "execution_mode": "safe"
+    }
+  ]
+}
+```
+
+- `approval_policy` supports `advice_only`, `confirm_write`, `confirm_exec`, and `allow_trusted`.
+- `allowed_exec_targets` is a regex allowlist for top-level shell commands.
+- `allowed_workspaces` is a regex allowlist for `exec` working directories.
+- `audit.path` defaults to `~/.picoclaw/logs/audit.jsonl`.
+- CLI-backed model entries default to `execution_mode: safe`; set `permissive` only for trusted local repos.
 
 ### Skill Sources
 

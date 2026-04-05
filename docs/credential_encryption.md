@@ -1,7 +1,15 @@
 # Credential Encryption
 
-PicoClaw supports encrypting `api_key`/`api_keys` values in `model_list` configuration entries.
-Encrypted keys are stored as `enc://<base64>` strings and decrypted automatically at startup.
+PicoClaw supports encrypting `api_key`/`api_keys` values in `model_list`
+configuration entries. Encrypted keys are stored as `enc://<base64>` strings and
+decrypted automatically at startup.
+
+> Scope note: this mechanism applies to config-managed secrets such as
+> `model_list` API keys. It does not currently encrypt every credential store in
+> the project. `picoclaw auth` provider credentials now use a separate encrypted
+> local store at `~/.picoclaw/auth.json`, backed by `~/.picoclaw/auth.key`.
+> That store is not the same as the `enc://` passphrase-backed config path, so
+> both files should still be treated as sensitive local state.
 
 ---
 

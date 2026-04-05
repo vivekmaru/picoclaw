@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next"
 
 import {
   getLauncherAuthStatus,
+  postLauncherDashboardBootstrap,
   postLauncherDashboardLogin,
   type LauncherAuthTokenHelp,
 } from "@/api/launcher-auth"
@@ -38,6 +39,45 @@ function LauncherLoginPage() {
 
   React.useEffect(() => {
     let cancelled = false
+    const hash = new URLSearchParams(globalThis.location.hash.replace(/^#/, ""))
+    const bootstrapCode = hash.get("bootstrap")?.trim() ?? ""
+
+    if (bootstrapCode) {
+      setSubmitting(true)
+      void postLauncherDashboardBootstrap(bootstrapCode)
+        .then((ok) => {
+          if (cancelled) {
+            return
+          }
+          globalThis.history.replaceState(
+            null,
+            document.title,
+            globalThis.location.pathname + globalThis.location.search,
+          )
+          if (ok) {
+            globalThis.location.assign("/")
+            return
+          }
+          setError(t("launcherLogin.errorInvalid"))
+          setSubmitting(false)
+        })
+        .catch(() => {
+          if (cancelled) {
+            return
+          }
+          globalThis.history.replaceState(
+            null,
+            document.title,
+            globalThis.location.pathname + globalThis.location.search,
+          )
+          setError(t("launcherLogin.errorNetwork"))
+          setSubmitting(false)
+        })
+      return () => {
+        cancelled = true
+      }
+    }
+
     void getLauncherAuthStatus()
       .then((s) => {
         if (cancelled || s.authenticated || !s.token_help) {
@@ -51,7 +91,7 @@ function LauncherLoginPage() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [t])
 
   const loginWithToken = React.useCallback(
     async (tokenValue: string) => {

@@ -323,6 +323,9 @@ func TestChat_PassesSystemPromptFlag(t *testing.T) {
 	if !strings.Contains(args, "--system-prompt") {
 		t.Errorf("CLI args missing --system-prompt, got: %s", args)
 	}
+	if strings.Contains(args, "--dangerously-skip-permissions") {
+		t.Errorf("CLI args should not contain dangerous flag in safe mode, got: %s", args)
+	}
 }
 
 func TestChat_PassesModelFlag(t *testing.T) {
@@ -391,6 +394,27 @@ func TestChat_SkipsModelFlagForEmptyModel(t *testing.T) {
 	}
 }
 
+func TestChat_PermissiveModeAddsDangerousFlag(t *testing.T) {
+	argsFile := filepath.Join(t.TempDir(), "args.txt")
+	script := createArgCaptureCLI(t, argsFile)
+
+	p := NewClaudeCliProvider(t.TempDir()).WithExecutionMode("permissive")
+	p.command = script
+
+	_, err := p.Chat(context.Background(), []Message{
+		{Role: "user", Content: "Hi"},
+	}, nil, "", nil)
+	if err != nil {
+		t.Fatalf("Chat() error = %v", err)
+	}
+
+	argsBytes, _ := os.ReadFile(argsFile)
+	args := string(argsBytes)
+	if !strings.Contains(args, "--dangerously-skip-permissions") {
+		t.Errorf("CLI args should contain dangerous flag in permissive mode, got: %s", args)
+	}
+}
+
 func TestChat_EmptyWorkspaceDoesNotSetDir(t *testing.T) {
 	mockJSON := `{"type":"result","result":"ok","session_id":"s"}`
 	script := createMockCLI(t, mockJSON, "", 0)
@@ -429,6 +453,9 @@ func TestCreateProvider_ClaudeCli(t *testing.T) {
 	}
 	if cliProvider.workspace != "/test/ws" {
 		t.Errorf("workspace = %q, want %q", cliProvider.workspace, "/test/ws")
+	}
+	if cliProvider.executionMode != config.ExecutionModeSafe {
+		t.Errorf("executionMode = %q, want %q", cliProvider.executionMode, config.ExecutionModeSafe)
 	}
 }
 

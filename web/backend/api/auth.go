@@ -15,6 +15,7 @@ type LauncherAuthRouteOpts struct {
 	DashboardToken string
 	SessionCookie  string
 	SecureCookie   func(*http.Request) bool
+	Bootstrap      *LauncherBootstrapManager
 	// TokenHelp is returned on unauthenticated /api/auth/status responses (no secrets).
 	TokenHelp LauncherAuthTokenHelp
 }
@@ -29,6 +30,10 @@ type LauncherAuthTokenHelp struct {
 
 type launcherAuthLoginBody struct {
 	Token string `json:"token"`
+}
+
+type launcherAuthBootstrapBody struct {
+	Code string `json:"code"`
 }
 
 type launcherAuthStatusResponse struct {
@@ -46,10 +51,12 @@ func RegisterLauncherAuthRoutes(mux *http.ServeMux, opts LauncherAuthRouteOpts) 
 		token:         opts.DashboardToken,
 		sessionCookie: opts.SessionCookie,
 		secureCookie:  secure,
+		bootstrap:     opts.Bootstrap,
 		tokenHelp:     opts.TokenHelp,
 		loginLimit:    newLoginRateLimiter(),
 	}
 	mux.HandleFunc("POST /api/auth/login", h.handleLogin)
+	mux.HandleFunc("POST /api/auth/bootstrap", h.handleBootstrap)
 	mux.HandleFunc("POST /api/auth/logout", h.handleLogout)
 	mux.HandleFunc("GET /api/auth/status", h.handleStatus)
 }
@@ -58,6 +65,7 @@ type launcherAuthHandlers struct {
 	token         string
 	sessionCookie string
 	secureCookie  func(*http.Request) bool
+	bootstrap     *LauncherBootstrapManager
 	tokenHelp     LauncherAuthTokenHelp
 	loginLimit    *loginRateLimiter
 }
@@ -80,6 +88,35 @@ func (h *launcherAuthHandlers) handleLogin(w http.ResponseWriter, r *http.Reques
 	if len(in) != len(h.token) || subtle.ConstantTimeCompare([]byte(in), []byte(h.token)) != 1 {
 		w.WriteHeader(http.StatusUnauthorized)
 		_, _ = w.Write([]byte(`{"error":"invalid token"}`))
+		return
+	}
+
+	middleware.SetLauncherDashboardSessionCookie(w, r, h.sessionCookie, h.secureCookie)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(`{"status":"ok"}`))
+}
+
+func (h *launcherAuthHandlers) handleBootstrap(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if h.bootstrap == nil {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"error":"bootstrap unavailable"}`))
+		return
+	}
+	if !isLoopbackRequest(r) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"error":"bootstrap requires loopback access"}`))
+		return
+	}
+	var body launcherAuthBootstrapBody
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&body); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":"invalid JSON"}`))
+		return
+	}
+	if !h.bootstrap.Consume(strings.TrimSpace(body.Code)) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":"invalid bootstrap code"}`))
 		return
 	}
 

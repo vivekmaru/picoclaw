@@ -245,6 +245,70 @@ func TestShellTool_OutputTruncation(t *testing.T) {
 	}
 }
 
+func TestShellTool_TrustAllowedExecTargets(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Trust.AllowedExecTargets = []string{`^echo$`}
+
+	tool, err := NewExecToolWithConfig("", false, cfg)
+	if err != nil {
+		t.Fatalf("NewExecToolWithConfig() error: %v", err)
+	}
+
+	allowed := tool.Execute(context.Background(), map[string]any{
+		"action":  "run",
+		"command": "echo hello",
+	})
+	if allowed.IsError {
+		t.Fatalf("echo should be allowed, got: %s", allowed.ForLLM)
+	}
+
+	blocked := tool.Execute(context.Background(), map[string]any{
+		"action":  "run",
+		"command": "pwd",
+	})
+	if !blocked.IsError || !strings.Contains(blocked.ForLLM, "execution target is not allowed") {
+		t.Fatalf("pwd should be blocked by trust policy, got: %+v", blocked)
+	}
+}
+
+func TestShellTool_AuditLogWritten(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv(config.EnvHome, home)
+
+	cfg := config.DefaultConfig()
+	cfg.Trust.Audit.Enabled = true
+	cfg.Trust.Audit.Path = filepath.Join(home, "logs", "audit.jsonl")
+	cfg.Trust.AllowedExecTargets = []string{`^echo$`}
+
+	tool, err := NewExecToolWithConfig("", false, cfg)
+	if err != nil {
+		t.Fatalf("NewExecToolWithConfig() error: %v", err)
+	}
+
+	result := tool.Execute(WithToolContext(context.Background(), "internal", "chat-1"), map[string]any{
+		"action":  "run",
+		"command": "echo audited",
+	})
+	if result.IsError {
+		t.Fatalf("echo should succeed, got: %s", result.ForLLM)
+	}
+
+	data, err := os.ReadFile(filepath.Join(home, "logs", "audit.jsonl"))
+	if err != nil {
+		t.Fatalf("ReadFile(audit) error: %v", err)
+	}
+	text := string(data)
+	if !strings.Contains(text, `"event":"tool.exec.completed"`) {
+		t.Fatalf("expected exec audit event, got: %s", text)
+	}
+	if !strings.Contains(text, `"chat_id":"chat-1"`) {
+		t.Fatalf("expected chat_id in audit log, got: %s", text)
+	}
+	if !strings.Contains(text, `"command":"echo audited"`) {
+		t.Fatalf("expected command metadata in audit log, got: %s", text)
+	}
+}
+
 // TestShellTool_WorkingDir_OutsideWorkspace verifies that working_dir cannot escape the workspace directly
 func TestShellTool_WorkingDir_OutsideWorkspace(t *testing.T) {
 	root := t.TempDir()
@@ -736,6 +800,24 @@ func TestShellTool_List_Empty(t *testing.T) {
 	result := tool.Execute(ctx, args)
 	require.False(t, result.IsError)
 	require.Contains(t, result.ForUser, "0 active sessions")
+}
+
+func TestExtractExecTarget_ShellAwareAssignments(t *testing.T) {
+	tests := []struct {
+		command string
+		want    string
+	}{
+		{command: `FOO='hello world' echo ok`, want: "echo"},
+		{command: `FOO="hello world" BAR=baz /usr/bin/env printf test`, want: "printf"},
+		{command: `env FOO='hello world' /bin/echo ok`, want: "echo"},
+		{command: `echo 'hello world'`, want: "echo"},
+	}
+
+	for _, tt := range tests {
+		if got := extractExecTarget(tt.command); got != tt.want {
+			t.Fatalf("extractExecTarget(%q) = %q, want %q", tt.command, got, tt.want)
+		}
+	}
 }
 
 func TestShellTool_RunBackground_List(t *testing.T) {
