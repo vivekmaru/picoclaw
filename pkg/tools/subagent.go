@@ -101,23 +101,24 @@ type SpawnSubTurnFunc func(
 type TeammateResolver func(teammateID string) (TaskTeammate, bool)
 
 type SubagentManager struct {
-	tasks          map[string]*SubagentTask
-	cancels        map[string]context.CancelFunc
-	approvals      map[string]chan bool
-	mu             sync.RWMutex
-	provider       providers.LLMProvider
-	defaultModel   string
-	workspace      string
-	stateFile      string
-	tools          *ToolRegistry
-	maxIterations  int
-	maxTokens      int
-	temperature    float64
-	hasMaxTokens   bool
-	hasTemperature bool
-	nextID         int
-	spawner        SpawnSubTurnFunc
-	teammates      TeammateResolver
+	tasks           map[string]*SubagentTask
+	cancels         map[string]context.CancelFunc
+	approvals       map[string]chan bool
+	mu              sync.RWMutex
+	provider        providers.LLMProvider
+	defaultModel    string
+	workspace       string
+	stateFile       string
+	legacyStateFile string
+	tools           *ToolRegistry
+	maxIterations   int
+	maxTokens       int
+	temperature     float64
+	hasMaxTokens    bool
+	hasTemperature  bool
+	nextID          int
+	spawner         SpawnSubTurnFunc
+	teammates       TeammateResolver
 
 	// mediaResolver resolves media:// refs in tool-loop messages before
 	// each LLM call in the legacy RunToolLoop fallback path.
@@ -144,16 +145,17 @@ func NewSubagentManager(
 		agentID = strings.TrimSpace(agentIDs[0])
 	}
 	sm := &SubagentManager{
-		tasks:         make(map[string]*SubagentTask),
-		cancels:       make(map[string]context.CancelFunc),
-		approvals:     make(map[string]chan bool),
-		provider:      provider,
-		defaultModel:  defaultModel,
-		workspace:     workspace,
-		stateFile:     filepath.Join(workspace, "state", "subagents", agentID, "tasks.json"),
-		tools:         NewToolRegistry(),
-		maxIterations: 10,
-		nextID:        1,
+		tasks:           make(map[string]*SubagentTask),
+		cancels:         make(map[string]context.CancelFunc),
+		approvals:       make(map[string]chan bool),
+		provider:        provider,
+		defaultModel:    defaultModel,
+		workspace:       workspace,
+		stateFile:       filepath.Join(workspace, "state", "subagents", agentID, "tasks.json"),
+		legacyStateFile: filepath.Join(workspace, "state", "subagents", "tasks.json"),
+		tools:           NewToolRegistry(),
+		maxIterations:   10,
+		nextID:          1,
 	}
 	if err := sm.loadPersistedTasks(); err != nil {
 		log.Printf("[WARN] subagent: failed to load persisted tasks: %v", err)
@@ -641,7 +643,13 @@ func (sm *SubagentManager) loadPersistedTasks() error {
 	if sm == nil || strings.TrimSpace(sm.stateFile) == "" {
 		return nil
 	}
-	data, err := os.ReadFile(sm.stateFile)
+
+	storePath := sm.stateFile
+	data, err := os.ReadFile(storePath)
+	if err != nil && os.IsNotExist(err) && strings.TrimSpace(sm.legacyStateFile) != "" {
+		storePath = sm.legacyStateFile
+		data, err = os.ReadFile(storePath)
+	}
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
@@ -663,6 +671,7 @@ func (sm *SubagentManager) loadPersistedTasks() error {
 
 	now := time.Now().UnixMilli()
 	needsRewrite := false
+	loadedFromLegacy := storePath != sm.stateFile
 	maxID := 0
 	for i := range store.Tasks {
 		task := store.Tasks[i]
@@ -689,8 +698,13 @@ func (sm *SubagentManager) loadPersistedTasks() error {
 		sm.nextID = maxID + 1
 	}
 
-	if needsRewrite {
-		return sm.persistLocked()
+	if needsRewrite || loadedFromLegacy {
+		if err := sm.persistLocked(); err != nil {
+			return err
+		}
+		if loadedFromLegacy {
+			_ = os.Remove(storePath)
+		}
 	}
 	return nil
 }

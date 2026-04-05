@@ -1155,7 +1155,10 @@ function MemoryReviewSection(props: {
                           {props.selectedProposal.approvable ? (
                             <Button
                               size="sm"
-                              disabled={props.busy}
+                              disabled={
+                                props.busy ||
+                                isProposalEditorDirty(props.selectedProposal, props.editor)
+                              }
                               onClick={() => props.onApprove(props.selectedProposal!)}
                             >
                               {props.t("pages.agent.teammates.memory_actions.approve")}

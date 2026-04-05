@@ -217,6 +217,54 @@ func TestSubagentManager_LoadPersistedTasksMarksInterrupted(t *testing.T) {
 	waitForTaskStatus(t, manager, spawned.ID, "completed")
 }
 
+func TestSubagentManager_LoadPersistedTasksMigratesLegacyStore(t *testing.T) {
+	workspace := t.TempDir()
+	legacyStateFile := filepath.Join(workspace, "state", "subagents", "tasks.json")
+	storeData, err := json.MarshalIndent(subagentTaskStore{
+		Version: subagentTaskStoreVersion,
+		NextID:  3,
+		Tasks: []SubagentTask{
+			{ID: "subagent-1", Task: "legacy work", Status: "completed", Created: 1},
+			{ID: "subagent-2", Task: "legacy queued", Status: "queued", Created: 2},
+		},
+	}, "", "  ")
+	if err != nil {
+		t.Fatalf("MarshalIndent() error = %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(legacyStateFile), 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(legacyStateFile, storeData, 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	manager := NewSubagentManager(&MockLLMProvider{}, "test-model", workspace, "main")
+
+	task1, ok := manager.GetTaskCopy("subagent-1")
+	if !ok {
+		t.Fatal("expected legacy task to be loaded")
+	}
+	if task1.Task != "legacy work" {
+		t.Fatalf("task1.Task = %q, want legacy work", task1.Task)
+	}
+
+	task2, ok := manager.GetTaskCopy("subagent-2")
+	if !ok {
+		t.Fatal("expected migrated queued task to be loaded")
+	}
+	if task2.Status != "failed" {
+		t.Fatalf("task2.Status = %q, want failed", task2.Status)
+	}
+
+	newStateFile := filepath.Join(workspace, "state", "subagents", "main", "tasks.json")
+	if _, err := os.Stat(newStateFile); err != nil {
+		t.Fatalf("new state file missing: %v", err)
+	}
+	if _, err := os.Stat(legacyStateFile); !os.IsNotExist(err) {
+		t.Fatalf("legacy state file should be removed after migration, stat err=%v", err)
+	}
+}
+
 func TestSubagentManager_CancelTaskPersistsState(t *testing.T) {
 	workspace := t.TempDir()
 	manager := NewSubagentManager(&MockLLMProvider{}, "test-model", workspace, "main")
