@@ -54,6 +54,24 @@ Secrets and credentials are split across:
 - `.security.yml`
 - `auth.json` + `auth.key`
 
+Agent coordination is split across two layers:
+
+- `agents`
+  runtime execution units with workspaces, tools, models, and routing
+- `teammates`
+  human-facing profiles that map onto agents and carry role, memory-scope, and
+  approval metadata for delegation
+
+Memory is now layered the same way:
+
+- shared memory stays in `workspace/memory/MEMORY.md`
+- teammate-local memory lives under `workspace/memory/teammates/<id>/`
+- custom scopes live under `workspace/memory/scopes/...`
+
+At prompt-build time, PicoClaw merges shared memory with the active teammate's
+local memory namespace so delegated work can keep separate working context
+without losing the shared project memory.
+
 ### Channels
 
 Channels are ingress and egress adapters for chat systems, sockets, and device

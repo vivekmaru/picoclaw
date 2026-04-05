@@ -69,6 +69,22 @@ PicoClaw stores data in your configured workspace (default: `~/.picoclaw/workspa
 
 > **Note:** Changes to `AGENT.md`, `SOUL.md`, `USER.md` and `memory/MEMORY.md` are automatically detected at runtime via file modification time (mtime) tracking. You do **not** need to restart the gateway after editing these files — the agent picks up the new content on the next request.
 
+Phase 2 memory namespaces keep the legacy shared path and add teammate-local scopes:
+
+```text
+workspace/
+└── memory/
+    ├── MEMORY.md                     # Shared memory (legacy path)
+    ├── YYYYMM/YYYYMMDD.md           # Shared daily notes
+    ├── teammates/<id>/MEMORY.md     # Teammate-local memory
+    ├── teammates/<id>/YYYYMM/...    # Teammate-local daily notes
+    └── scopes/...                   # Custom named memory scopes
+```
+
+Shared memory remains the default compatibility path. When a teammate profile has
+`memory_scope`, PicoClaw now injects both shared memory and that teammate-local
+memory into the system prompt for delegated work.
+
 ### Web launcher dashboard
 
 **picoclaw-launcher** serves a browser UI that requires sign-in first. By default, the **dashboard token** and **session signing key** are **generated in memory on each start** (a new random token after every restart). Set **`PICOCLAW_LAUNCHER_TOKEN`** to pin a fixed token for that process (startup logs do not print the secret when this env var is used).
@@ -211,6 +227,56 @@ Use `bindings` in `config.json` to route incoming messages to different agents b
 | `match.account_id` | No | Channel account filter. Use `"*"` for all accounts of that channel. If omitted, only default account is matched |
 | `match.peer.kind` + `match.peer.id` | No | Exact peer match (e.g. direct chat / topic / group id) |
 | `match.guild_id` | No | Guild/server-level match |
+
+### Teammate Profiles
+
+Phase 2 introduces teammate profiles as a layer above raw agents. A teammate can
+point at an agent, carry a role, define a memory scope, and become a target for
+delegation via `teammate_id`.
+
+```json
+{
+  "agents": {
+    "defaults": {
+      "workspace": "~/.picoclaw/workspace",
+      "model_name": "planner-model"
+    },
+    "list": [
+      {
+        "id": "planner",
+        "default": true,
+        "subagents": { "allow_agents": ["coder"] }
+      },
+      { "id": "coder", "workspace": "~/.picoclaw/workspace-coder" }
+    ]
+  },
+  "teammates": {
+    "defaults": {
+      "approval_policy": "confirm_write"
+    },
+    "list": [
+      {
+        "id": "reviewer",
+        "name": "Code Reviewer",
+        "role": "reviewer",
+        "agent_id": "coder",
+        "memory_scope": "team/reviewer",
+        "workspace_scope": ["~/.picoclaw/workspace-coder"]
+      }
+    ]
+  }
+}
+```
+
+- `teammates.list[].agent_id` maps the profile onto an existing agent.
+- `role` is descriptive metadata for routing, UI, and future policy decisions.
+- `memory_scope` gives delegated tasks a stable namespace to reference.
+- `memory_scope: "teammate:reviewer"` maps to `workspace/memory/teammates/reviewer/`.
+- custom scopes such as `team/reviewer` map to `workspace/memory/scopes/team/reviewer/`.
+- when no teammate profile is configured for an agent, PicoClaw creates an implicit teammate profile for that agent automatically.
+- each turn now gets shared memory plus the current teammate's local memory scope when one exists.
+- the `spawn` tool now accepts `teammate_id` in addition to `agent_id`.
+- `spawn_status` keeps the human-readable report and now also appends a structured task payload for machine inspection.
 | `match.team_id` | No | Team/workspace-level match |
 
 #### Matching priority

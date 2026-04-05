@@ -30,6 +30,7 @@ type Config struct {
 	Agents    AgentsConfig    `json:"agents"             yaml:"-"`
 	Bindings  []AgentBinding  `json:"bindings,omitempty" yaml:"-"`
 	Session   SessionConfig   `json:"session,omitempty"  yaml:"-"`
+	Teammates TeammatesConfig `json:"teammates,omitempty" yaml:"-"`
 	Channels  ChannelsConfig  `json:"channels"           yaml:"channels"`
 	ModelList SecureModelList `json:"model_list"         yaml:"model_list"` // New model-centric provider configuration
 	Gateway   GatewayConfig   `json:"gateway"            yaml:"-"`
@@ -199,6 +200,29 @@ type AgentBinding struct {
 type SessionConfig struct {
 	DMScope       string              `json:"dm_scope,omitempty"`
 	IdentityLinks map[string][]string `json:"identity_links,omitempty"`
+}
+
+type TeammatesConfig struct {
+	Defaults TeammateDefaults `json:"defaults,omitempty"`
+	List     []TeammateConfig `json:"list,omitempty"`
+}
+
+type TeammateDefaults struct {
+	Role           string `json:"role,omitempty"`
+	MemoryScope    string `json:"memory_scope,omitempty"`
+	ApprovalPolicy string `json:"approval_policy,omitempty"`
+}
+
+type TeammateConfig struct {
+	ID             string   `json:"id"`
+	Name           string   `json:"name,omitempty"`
+	Role           string   `json:"role,omitempty"`
+	AgentID        string   `json:"agent_id,omitempty"`
+	Model          string   `json:"model,omitempty"`
+	MemoryScope    string   `json:"memory_scope,omitempty"`
+	ApprovalPolicy string   `json:"approval_policy,omitempty"`
+	WorkspaceScope []string `json:"workspace_scope,omitempty"`
+	Toolset        []string `json:"toolset,omitempty"`
 }
 
 // RoutingConfig controls the intelligent model routing feature.

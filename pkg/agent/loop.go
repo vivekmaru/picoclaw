@@ -80,6 +80,7 @@ type processOptions struct {
 	ChatID                  string              // Target chat ID for tool execution
 	MessageID               string              // Current inbound platform message ID
 	ReplyToMessageID        string              // Current inbound reply target message ID
+	TeammateID              string              // Teammate profile to use for scoped memory/context
 	SenderID                string              // Current sender ID for dynamic context
 	SenderDisplayName       string              // Current sender display name for dynamic context
 	UserMessage             string              // User message content (may include prefix)
@@ -134,6 +135,28 @@ func (al *AgentLoop) trustPolicyDenyReason(toolName string) string {
 		}
 	}
 	return ""
+}
+
+func (al *AgentLoop) contextBuilderForTurn(agent *AgentInstance, teammateID string) *ContextBuilder {
+	if agent == nil || agent.ContextBuilder == nil {
+		return nil
+	}
+	if al == nil || al.registry == nil {
+		return agent.ContextBuilder
+	}
+
+	if teammateID == "" {
+		if defaultTeammate, ok := al.registry.DefaultTeammateForAgent(agent.ID); ok {
+			return agent.ContextBuilder.ForTeammate(defaultTeammate)
+		}
+		return agent.ContextBuilder
+	}
+
+	if teammate, ok := al.registry.GetTeammate(teammateID); ok {
+		return agent.ContextBuilder.ForTeammate(teammate)
+	}
+
+	return agent.ContextBuilder
 }
 
 func (al *AgentLoop) writeToolAudit(
@@ -393,7 +416,7 @@ func registerSharedTools(
 		spawnEnabled := cfg.Tools.IsToolEnabled("spawn")
 		spawnStatusEnabled := cfg.Tools.IsToolEnabled("spawn_status")
 		if (spawnEnabled || spawnStatusEnabled) && cfg.Tools.IsToolEnabled("subagent") {
-			subagentManager := tools.NewSubagentManager(provider, agent.Model, agent.Workspace)
+			subagentManager := tools.NewSubagentManager(provider, agent.Model, agent.Workspace, agent.ID)
 			subagentManager.SetLLMOptions(agent.MaxTokens, agent.Temperature)
 
 			// Inject a media resolver so the legacy RunToolLoop fallback path can
@@ -407,7 +430,7 @@ func registerSharedTools(
 			// Set the spawner that links into AgentLoop's turnState
 			subagentManager.SetSpawner(func(
 				ctx context.Context,
-				task, label, targetAgentID string,
+				task, label, targetAgentID, teammateID string,
 				tls *tools.ToolRegistry,
 				maxTokens int,
 				temperature float64,
@@ -444,9 +467,22 @@ func registerSharedTools(
 
 				// 4. Resolve Model
 				modelToUse := agent.Model
-				if targetAgentID != "" {
-					if targetAgent, ok := al.GetRegistry().GetAgent(targetAgentID); ok {
-						modelToUse = targetAgent.Model
+				targetAgentResolved := targetAgentID
+				modelPinnedByTeammate := false
+				if teammateID != "" {
+					if teammate, ok := al.GetRegistry().GetTeammate(teammateID); ok {
+						targetAgentResolved = teammate.AgentID
+						if teammate.Model != "" {
+							modelToUse = teammate.Model
+							modelPinnedByTeammate = true
+						}
+					}
+				}
+				if targetAgentResolved != "" {
+					if targetAgent, ok := al.GetRegistry().GetAgent(targetAgentResolved); ok {
+						if !modelPinnedByTeammate {
+							modelToUse = targetAgent.Model
+						}
 					}
 				}
 
@@ -455,6 +491,7 @@ func registerSharedTools(
 					Model:        modelToUse,
 					Tools:        tlSlice,
 					SystemPrompt: systemPrompt,
+					TeammateID:   teammateID,
 				}
 				if hasMaxTokens {
 					cfg.MaxTokens = maxTokens
@@ -462,6 +499,13 @@ func registerSharedTools(
 
 				// 6. Spawn SubTurn
 				return spawnSubTurn(ctx, al, parentTS, cfg)
+			})
+			subagentManager.SetTeammateResolver(func(teammateID string) (tools.TaskTeammate, bool) {
+				profile, ok := registry.GetTeammate(teammateID)
+				if !ok {
+					return tools.TaskTeammate{}, false
+				}
+				return profile.toTaskTeammate(), true
 			})
 
 			// Clone the parent's tool registry so subagents can use all
@@ -473,7 +517,15 @@ func registerSharedTools(
 				spawnTool := tools.NewSpawnTool(subagentManager)
 				spawnTool.SetSpawner(NewSubTurnSpawner(al))
 				currentAgentID := agentID
-				spawnTool.SetAllowlistChecker(func(targetAgentID string) bool {
+				if teammate, ok := registry.DefaultTeammateForAgent(currentAgentID); ok {
+					spawnTool.SetRequesterIdentity(currentAgentID, teammate.ID)
+				} else {
+					spawnTool.SetRequesterIdentity(currentAgentID, "")
+				}
+				spawnTool.SetAllowlistChecker(func(targetAgentID, teammateID string) bool {
+					if teammateID != "" {
+						return registry.CanDelegateToTeammate(currentAgentID, teammateID)
+					}
 					return registry.CanSpawnSubagent(currentAgentID, targetAgentID)
 				})
 
@@ -1771,7 +1823,12 @@ func (al *AgentLoop) runTurn(ctx context.Context, ts *turnState) (turnResult, er
 	}
 	ts.captureRestorePoint(history, summary)
 
-	messages := ts.agent.ContextBuilder.BuildMessages(
+	contextBuilder := al.contextBuilderForTurn(ts.agent, ts.opts.TeammateID)
+	if contextBuilder == nil {
+		return turnResult{}, fmt.Errorf("context builder unavailable for agent %s", ts.agent.ID)
+	}
+
+	messages := contextBuilder.BuildMessages(
 		history,
 		summary,
 		ts.userMessage,
@@ -1811,7 +1868,7 @@ func (al *AgentLoop) runTurn(ctx context.Context, ts *turnState) (turnResult, er
 				history = resp.History
 				summary = resp.Summary
 			}
-			messages = ts.agent.ContextBuilder.BuildMessages(
+			messages = contextBuilder.BuildMessages(
 				history, summary, ts.userMessage,
 				ts.media, ts.channel, ts.chatID,
 				ts.opts.SenderID, ts.opts.SenderDisplayName,
@@ -2197,7 +2254,7 @@ turnLoop:
 					history = asmResp.History
 					summary = asmResp.Summary
 				}
-				messages = ts.agent.ContextBuilder.BuildMessages(
+				messages = contextBuilder.BuildMessages(
 					history, summary, "",
 					nil, ts.channel, ts.chatID, ts.opts.SenderID, ts.opts.SenderDisplayName,
 					activeSkillNames(ts.agent, ts.opts)...,

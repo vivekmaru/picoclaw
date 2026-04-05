@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -18,6 +19,13 @@ type SpawnStatusTool struct {
 // NewSpawnStatusTool creates a SpawnStatusTool backed by the given manager.
 func NewSpawnStatusTool(manager *SubagentManager) *SpawnStatusTool {
 	return &SpawnStatusTool{manager: manager}
+}
+
+func (t *SpawnStatusTool) Manager() *SubagentManager {
+	if t == nil {
+		return nil
+	}
+	return t.manager
 }
 
 func (t *SpawnStatusTool) Name() string {
@@ -84,7 +92,12 @@ func (t *SpawnStatusTool) Execute(ctx context.Context, args map[string]any) *Too
 			return ErrorResult(fmt.Sprintf("No subagent found with task ID: %s", taskID))
 		}
 
-		return NewToolResult(spawnStatusFormatTask(&taskCopy))
+		sanitized := sanitizeSpawnStatusTask(taskCopy)
+		formatted := spawnStatusFormatTask(&sanitized)
+		return &ToolResult{
+			ForLLM:  formatted + "\n\nStructured Task:\n" + marshalSpawnStatusPayload(map[string]any{"task": taskStatusSnapshot(sanitized)}),
+			ForUser: formatted,
+		}
 	}
 
 	// ListTaskCopies returns consistent snapshots under the manager lock.
@@ -128,7 +141,7 @@ func (t *SpawnStatusTool) Execute(ctx context.Context, args map[string]any) *Too
 
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("Subagent status report (%d total):\n", len(tasks)))
-	for _, status := range []string{"running", "completed", "failed", "canceled"} {
+	for _, status := range []string{"awaiting_approval", "queued", "running", "canceling", "completed", "failed", "canceled", "denied"} {
 		if n := counts[status]; n > 0 {
 			label := strings.ToUpper(status[:1]) + status[1:] + ":"
 			sb.WriteString(fmt.Sprintf("  %-10s %d\n", label, n))
@@ -141,7 +154,20 @@ func (t *SpawnStatusTool) Execute(ctx context.Context, args map[string]any) *Too
 		sb.WriteString("\n\n")
 	}
 
-	return NewToolResult(strings.TrimRight(sb.String(), "\n"))
+	structuredTasks := make([]map[string]any, 0, len(tasks))
+	for _, task := range tasks {
+		sanitized := sanitizeSpawnStatusTask(*task)
+		structuredTasks = append(structuredTasks, taskStatusSnapshot(sanitized))
+	}
+
+	formatted := strings.TrimRight(sb.String(), "\n")
+	return &ToolResult{
+		ForLLM: formatted + "\n\nStructured Task List:\n" + marshalSpawnStatusPayload(map[string]any{
+			"summary": counts,
+			"tasks":   structuredTasks,
+		}),
+		ForUser: formatted,
+	}
 }
 
 // spawnStatusFormatTask renders a single SubagentTask as a human-readable block.
@@ -164,6 +190,12 @@ func spawnStatusFormatTask(task *SubagentTask) string {
 	if task.Task != "" {
 		sb.WriteString(fmt.Sprintf("\n  task:   %s", task.Task))
 	}
+	if task.TeammateID != "" {
+		sb.WriteString(fmt.Sprintf("\n  teammate: %s", task.TeammateID))
+	}
+	if task.MemoryScope != "" {
+		sb.WriteString(fmt.Sprintf("\n  memory: %s", task.MemoryScope))
+	}
 	if task.Result != "" {
 		result := task.Result
 		const maxResultLen = 300
@@ -175,4 +207,56 @@ func spawnStatusFormatTask(task *SubagentTask) string {
 	}
 
 	return sb.String()
+}
+
+func marshalSpawnStatusPayload(payload map[string]any) string {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return `{"error":"failed to encode spawn status"}`
+	}
+	return string(data)
+}
+
+func sanitizeSpawnStatusTask(task SubagentTask) SubagentTask {
+	const maxResultLen = 300
+	if task.Result == "" {
+		return task
+	}
+	runes := []rune(task.Result)
+	if len(runes) <= maxResultLen {
+		return task
+	}
+	task.Result = string(runes[:maxResultLen]) + "…"
+	return task
+}
+
+func taskStatusSnapshot(task SubagentTask) map[string]any {
+	snapshot := map[string]any{
+		"id":      task.ID,
+		"kind":    task.Kind,
+		"status":  task.Status,
+		"created": task.Created,
+	}
+	if task.Label != "" {
+		snapshot["label"] = task.Label
+	}
+	if task.AgentID != "" {
+		snapshot["agent_id"] = task.AgentID
+	}
+	if task.TeammateID != "" {
+		snapshot["teammate_id"] = task.TeammateID
+	}
+	if task.RequesterTeammateID != "" {
+		snapshot["requester_teammate_id"] = task.RequesterTeammateID
+	}
+	if task.MemoryScope != "" {
+		snapshot["memory_scope"] = task.MemoryScope
+	}
+	if task.Started > 0 {
+		snapshot["started"] = task.Started
+	}
+	if task.Completed > 0 {
+		snapshot["completed"] = task.Completed
+	}
+	return snapshot
 }

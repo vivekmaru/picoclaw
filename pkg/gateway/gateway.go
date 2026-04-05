@@ -381,6 +381,7 @@ func setupAndStartServices(
 	runningServices.authToken = authToken
 	runningServices.HealthServer = health.NewServer(cfg.Gateway.Host, cfg.Gateway.Port, authToken)
 	runningServices.ChannelManager.SetupHTTPServer(addr, runningServices.HealthServer)
+	registerRuntimeHTTPHandlers(agentLoop, runningServices.ChannelManager, authToken)
 
 	if err = runningServices.ChannelManager.StartAll(context.Background()); err != nil {
 		return nil, fmt.Errorf("error starting channels: %w", err)

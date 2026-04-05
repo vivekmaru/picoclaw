@@ -32,6 +32,7 @@ At runtime the launcher and the main PicoClaw engine are separate processes:
 3. When allowed, it starts or attaches to `picoclaw gateway -E`.
 4. The frontend talks only to the launcher backend.
 5. The launcher proxies chat traffic to the gateway through `/pico/ws`.
+6. Live teammate/task runtime data is fetched from the gateway through an authenticated internal endpoint and re-exposed as `/api/agent/runtime`.
 
 ## Dashboard Capabilities
 
@@ -52,6 +53,9 @@ The current frontend exposes these major pages and flows:
 - `/agent/skills`
   - Browse built-in, global, and workspace skills.
   - Import Markdown skills into the workspace and delete workspace-owned skills.
+- `/agent/teammates`
+  - Inspect live teammate profiles resolved by the running gateway.
+  - View tracked delegation tasks, memory scopes, and requester/runtime ownership.
 - `/agent/tools`
   - View tool availability and enable or disable tool switches through config-backed APIs.
 - `/config`

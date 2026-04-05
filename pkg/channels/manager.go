@@ -457,6 +457,29 @@ func (m *Manager) SetupHTTPServer(addr string, healthServer *health.Server) {
 	}
 }
 
+// RegisterHTTPHandler exposes an additional HTTP handler on the shared channel server.
+// It is intended for internal gateway endpoints that should live alongside
+// webhook and health routes.
+func (m *Manager) RegisterHTTPHandler(pattern string, handler http.Handler) {
+	if m == nil || handler == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.mux == nil {
+		return
+	}
+	m.mux.Handle(pattern, handler)
+}
+
+// RegisterHTTPHandlerFunc is the func adapter for RegisterHTTPHandler.
+func (m *Manager) RegisterHTTPHandlerFunc(pattern string, handler func(http.ResponseWriter, *http.Request)) {
+	if handler == nil {
+		return
+	}
+	m.RegisterHTTPHandler(pattern, http.HandlerFunc(handler))
+}
+
 // registerHTTPHandlersLocked registers webhook and health-check handlers for
 // all channels currently in m.channels. Caller must hold m.mu (or ensure
 // exclusive access).

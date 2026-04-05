@@ -54,6 +54,9 @@ func TestNewAgentRegistry_ImplicitMain(t *testing.T) {
 	if agent.ID != "main" {
 		t.Errorf("agent.ID = %q, want 'main'", agent.ID)
 	}
+	if teammate, ok := registry.GetTeammate("main"); !ok || teammate.AgentID != "main" {
+		t.Fatalf("expected implicit main teammate, got %+v ok=%v", teammate, ok)
+	}
 }
 
 func TestNewAgentRegistry_ExplicitAgents(t *testing.T) {
@@ -158,6 +161,78 @@ func TestAgentRegistry_CanSpawnSubagent_Wildcard(t *testing.T) {
 	}
 	if !registry.CanSpawnSubagent("admin", "nonexistent") {
 		t.Error("expected wildcard to allow spawning even nonexistent agents")
+	}
+}
+
+func TestAgentRegistry_ConfiguredTeammates(t *testing.T) {
+	cfg := testCfg([]config.AgentConfig{
+		{
+			ID:      "planner",
+			Default: true,
+			Subagents: &config.SubagentsConfig{
+				AllowAgents: []string{"coder"},
+			},
+		},
+		{ID: "coder"},
+	})
+	cfg.Teammates.List = []config.TeammateConfig{
+		{
+			ID:             "reviewer",
+			Name:           "Code Reviewer",
+			Role:           "reviewer",
+			AgentID:        "coder",
+			MemoryScope:    "team/reviewer",
+			ApprovalPolicy: config.ApprovalPolicyConfirmWrite,
+		},
+	}
+
+	registry := NewAgentRegistry(cfg, &mockRegistryProvider{})
+	teammate, ok := registry.GetTeammate("reviewer")
+	if !ok {
+		t.Fatal("expected configured teammate")
+	}
+	if teammate.AgentID != "coder" {
+		t.Fatalf("AgentID = %q, want coder", teammate.AgentID)
+	}
+	if teammate.Role != "reviewer" {
+		t.Fatalf("Role = %q, want reviewer", teammate.Role)
+	}
+	if !registry.CanDelegateToTeammate("planner", "reviewer") {
+		t.Fatal("planner should be able to delegate to reviewer via coder agent")
+	}
+}
+
+func TestAgentRegistry_DefaultTeammateForAgent(t *testing.T) {
+	cfg := testCfg([]config.AgentConfig{
+		{ID: "ops", Default: true, Name: "Ops"},
+	})
+	registry := NewAgentRegistry(cfg, &mockRegistryProvider{})
+
+	teammate, ok := registry.DefaultTeammateForAgent("ops")
+	if !ok {
+		t.Fatal("expected default teammate for agent")
+	}
+	if teammate.ID != "ops" {
+		t.Fatalf("teammate.ID = %q, want ops", teammate.ID)
+	}
+}
+
+func TestAgentRegistry_DefaultTeammateForAgentUsesStableSortedFallback(t *testing.T) {
+	cfg := testCfg([]config.AgentConfig{
+		{ID: "ops", Default: true, Name: "Ops"},
+	})
+	cfg.Teammates.List = []config.TeammateConfig{
+		{ID: "reviewer", AgentID: "ops"},
+		{ID: "analyst", AgentID: "ops"},
+	}
+
+	registry := NewAgentRegistry(cfg, &mockRegistryProvider{})
+	teammate, ok := registry.DefaultTeammateForAgent("ops")
+	if !ok {
+		t.Fatal("expected default teammate for agent")
+	}
+	if teammate.ID != "analyst" {
+		t.Fatalf("teammate.ID = %q, want analyst", teammate.ID)
 	}
 }
 

@@ -22,10 +22,14 @@ import (
 type ContextBuilder struct {
 	workspace          string
 	skillsLoader       *skills.SkillsLoader
-	memory             *MemoryStore
+	sharedMemory       *MemoryStore
+	teammateMemory     *MemoryStore
+	teammateProfile    *TeammateProfile
 	toolDiscoveryBM25  bool
 	toolDiscoveryRegex bool
 	splitOnMarker      bool
+	variantMu          sync.Mutex
+	variants           map[string]*ContextBuilder
 
 	// Cache for system prompt to avoid rebuilding on every call.
 	// This fixes issue #607: repeated reprocessing of the entire context.
@@ -74,7 +78,7 @@ func NewContextBuilder(workspace string) *ContextBuilder {
 	return &ContextBuilder{
 		workspace:    workspace,
 		skillsLoader: skills.NewSkillsLoader(workspace, globalSkillsDir, builtinSkillsDir),
-		memory:       NewMemoryStore(workspace),
+		sharedMemory: NewMemoryStore(workspace),
 	}
 }
 
@@ -82,6 +86,8 @@ func (cb *ContextBuilder) getIdentity() string {
 	workspacePath, _ := filepath.Abs(filepath.Join(cb.workspace))
 	toolDiscovery := cb.getDiscoveryRule()
 	version := config.FormatVersion()
+	memoryLayout := cb.memoryLayoutLines()
+	memoryRule := cb.memoryInstructionLine()
 
 	return fmt.Sprintf(
 		`# picoclaw 🦞 (%s)
@@ -90,9 +96,8 @@ You are picoclaw, a helpful AI assistant.
 
 ## Workspace
 Your workspace is at: %s
-- Memory: %s/memory/MEMORY.md
-- Daily Notes: %s/memory/YYYYMM/YYYYMMDD.md
 - Skills: %s/skills/{skill-name}/SKILL.md
+%s
 
 ## Important Rules
 
@@ -100,12 +105,12 @@ Your workspace is at: %s
 
 2. **Be helpful and accurate** - When using tools, briefly explain what you're doing.
 
-3. **Memory** - When interacting with me if something seems memorable, update %s/memory/MEMORY.md
+3. **Memory** - %s
 
 4. **Context summaries** - Conversation summaries provided as context are approximate references only. They may be incomplete or outdated. Always defer to explicit user instructions over summary content.
 
 %s`,
-		version, workspacePath, workspacePath, workspacePath, workspacePath, workspacePath, toolDiscovery)
+		version, workspacePath, workspacePath, memoryLayout, memoryRule, toolDiscovery)
 }
 
 func (cb *ContextBuilder) getDiscoveryRule() string {
@@ -150,9 +155,9 @@ The following skills extend your capabilities. To use a skill, read its SKILL.md
 	}
 
 	// Memory context
-	memoryContext := cb.memory.GetMemoryContext()
+	memoryContext := cb.buildMemorySections()
 	if memoryContext != "" {
-		parts = append(parts, "# Memory\n\n"+memoryContext)
+		parts = append(parts, memoryContext)
 	}
 
 	// Multi-Message Sending (if enabled)
@@ -231,7 +236,9 @@ func (cb *ContextBuilder) InvalidateCache() {
 func (cb *ContextBuilder) sourcePaths() []string {
 	agentDefinition := cb.LoadAgentDefinition()
 	paths := agentDefinition.trackedPaths(cb.workspace)
-	paths = append(paths, filepath.Join(cb.workspace, "memory", "MEMORY.md"))
+	for _, store := range cb.memoryStores() {
+		paths = append(paths, store.SourcePaths(recentMemoryContextDays)...)
+	}
 	return uniquePaths(paths)
 }
 
@@ -339,6 +346,45 @@ func (cb *ContextBuilder) sourceFilesChangedLocked() bool {
 	}
 
 	return false
+}
+
+func (cb *ContextBuilder) ForTeammate(profile TeammateProfile) *ContextBuilder {
+	key := teammateVariantKey(profile)
+	if key == "" {
+		return cb
+	}
+
+	cb.variantMu.Lock()
+	defer cb.variantMu.Unlock()
+
+	if existing, ok := cb.variants[key]; ok {
+		return existing
+	}
+	if cb.variants == nil {
+		cb.variants = make(map[string]*ContextBuilder)
+	}
+
+	profileCopy := profile
+	var teammateMemory *MemoryStore
+	if scope := strings.TrimSpace(profile.MemoryScope); scope != "" {
+		candidate := NewMemoryStoreForScope(cb.workspace, scope)
+		if cb.sharedMemory == nil || candidate.LongTermPath() != cb.sharedMemory.LongTermPath() {
+			teammateMemory = candidate
+		}
+	}
+
+	variant := &ContextBuilder{
+		workspace:          cb.workspace,
+		skillsLoader:       cb.skillsLoader,
+		sharedMemory:       cb.sharedMemory,
+		teammateMemory:     teammateMemory,
+		teammateProfile:    &profileCopy,
+		toolDiscoveryBM25:  cb.toolDiscoveryBM25,
+		toolDiscoveryRegex: cb.toolDiscoveryRegex,
+		splitOnMarker:      cb.splitOnMarker,
+	}
+	cb.variants[key] = variant
+	return variant
 }
 
 // fileChangedSince returns true if a tracked source file has been modified,
@@ -466,6 +512,86 @@ func (cb *ContextBuilder) LoadBootstrapFiles() string {
 	}
 
 	return sb.String()
+}
+
+func (cb *ContextBuilder) memoryStores() []*MemoryStore {
+	stores := []*MemoryStore{}
+	if cb.sharedMemory != nil {
+		stores = append(stores, cb.sharedMemory)
+	}
+	if cb.teammateMemory != nil {
+		stores = append(stores, cb.teammateMemory)
+	}
+	return stores
+}
+
+func (cb *ContextBuilder) memoryLayoutLines() string {
+	lines := []string{}
+	if cb.sharedMemory != nil {
+		lines = append(lines, fmt.Sprintf("- Shared Memory: %s", cb.sharedMemory.LongTermPath()))
+		lines = append(lines, fmt.Sprintf("- Shared Daily Notes: %s", cb.sharedMemory.DailyNotesPattern()))
+	}
+	if cb.teammateMemory != nil {
+		lines = append(lines, fmt.Sprintf("- %s: %s", cb.teammateHeading(), cb.teammateMemory.LongTermPath()))
+		lines = append(lines, fmt.Sprintf("- %s Daily Notes: %s", cb.teammateHeading(), cb.teammateMemory.DailyNotesPattern()))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (cb *ContextBuilder) memoryInstructionLine() string {
+	if cb.teammateMemory == nil {
+		if cb.sharedMemory == nil {
+			return "When interacting with me, keep memorable workspace context in shared memory."
+		}
+		return fmt.Sprintf("When interacting with me, keep memorable workspace context in %s.", cb.sharedMemory.LongTermPath())
+	}
+	return fmt.Sprintf(
+		"Use %s for workspace-level facts and %s for role-specific notes when acting as %s.",
+		cb.sharedMemory.LongTermPath(),
+		cb.teammateMemory.LongTermPath(),
+		cb.teammateHeading(),
+	)
+}
+
+func (cb *ContextBuilder) buildMemorySections() string {
+	sections := []string{}
+	if cb.sharedMemory != nil {
+		if shared := cb.sharedMemory.GetMemoryContext(); shared != "" {
+			sections = append(sections, fmt.Sprintf("# Shared Memory\n\nPath: %s\n\n%s", cb.sharedMemory.LongTermPath(), shared))
+		}
+	}
+	if cb.teammateMemory != nil {
+		if teammate := cb.teammateMemory.GetMemoryContext(); teammate != "" {
+			sections = append(sections, fmt.Sprintf(
+				"# %s\n\nScope: %s\nPath: %s\n\n%s",
+				cb.teammateHeading(),
+				cb.teammateMemory.Scope(),
+				cb.teammateMemory.LongTermPath(),
+				teammate,
+			))
+		}
+	}
+	return strings.Join(sections, "\n\n---\n\n")
+}
+
+func (cb *ContextBuilder) teammateHeading() string {
+	if cb.teammateProfile == nil {
+		return "Teammate Memory"
+	}
+	if name := strings.TrimSpace(cb.teammateProfile.Name); name != "" {
+		return fmt.Sprintf("Teammate Memory (%s)", name)
+	}
+	if id := strings.TrimSpace(cb.teammateProfile.ID); id != "" {
+		return fmt.Sprintf("Teammate Memory (%s)", id)
+	}
+	return "Teammate Memory"
+}
+
+func teammateVariantKey(profile TeammateProfile) string {
+	if id := strings.TrimSpace(profile.ID); id != "" {
+		return id
+	}
+	return strings.TrimSpace(profile.MemoryScope)
 }
 
 // buildDynamicContext returns a short dynamic context string with per-request info.
