@@ -137,7 +137,12 @@ const subagentTaskStoreVersion = 1
 func NewSubagentManager(
 	provider providers.LLMProvider,
 	defaultModel, workspace string,
+	agentIDs ...string,
 ) *SubagentManager {
+	agentID := "default"
+	if len(agentIDs) > 0 && strings.TrimSpace(agentIDs[0]) != "" {
+		agentID = strings.TrimSpace(agentIDs[0])
+	}
 	sm := &SubagentManager{
 		tasks:         make(map[string]*SubagentTask),
 		cancels:       make(map[string]context.CancelFunc),
@@ -145,7 +150,7 @@ func NewSubagentManager(
 		provider:      provider,
 		defaultModel:  defaultModel,
 		workspace:     workspace,
-		stateFile:     filepath.Join(workspace, "state", "subagents", "tasks.json"),
+		stateFile:     filepath.Join(workspace, "state", "subagents", agentID, "tasks.json"),
 		tools:         NewToolRegistry(),
 		maxIterations: 10,
 		nextID:        1,

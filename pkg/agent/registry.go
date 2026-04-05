@@ -127,12 +127,17 @@ func (r *AgentRegistry) DefaultTeammateForAgent(agentID string) (TeammateProfile
 	if profile, ok := r.teammates[normAgentID]; ok {
 		return profile, true
 	}
-	for _, profile := range r.teammates {
+	ids := make([]string, 0, len(r.teammates))
+	for id, profile := range r.teammates {
 		if routing.NormalizeAgentID(profile.AgentID) == normAgentID {
-			return profile, true
+			ids = append(ids, id)
 		}
 	}
-	return TeammateProfile{}, false
+	if len(ids) == 0 {
+		return TeammateProfile{}, false
+	}
+	slices.Sort(ids)
+	return r.teammates[ids[0]], true
 }
 
 // CanSpawnSubagent checks if parentAgentID is allowed to spawn targetAgentID.

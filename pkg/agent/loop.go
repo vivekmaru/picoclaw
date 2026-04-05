@@ -415,7 +415,7 @@ func registerSharedTools(
 		spawnEnabled := cfg.Tools.IsToolEnabled("spawn")
 		spawnStatusEnabled := cfg.Tools.IsToolEnabled("spawn_status")
 		if (spawnEnabled || spawnStatusEnabled) && cfg.Tools.IsToolEnabled("subagent") {
-			subagentManager := tools.NewSubagentManager(provider, agent.Model, agent.Workspace)
+			subagentManager := tools.NewSubagentManager(provider, agent.Model, agent.Workspace, agent.ID)
 			subagentManager.SetLLMOptions(agent.MaxTokens, agent.Temperature)
 
 			// Inject a media resolver so the legacy RunToolLoop fallback path can
