@@ -94,3 +94,103 @@ func TestHandleAgentRuntime_GatewayNotRunning(t *testing.T) {
 		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
 	}
 }
+
+func TestHandleAgentRuntimeTask_ProxySuccess(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	cfg := config.DefaultConfig()
+	if err := config.SaveConfig(configPath, cfg); err != nil {
+		t.Fatalf("SaveConfig() error = %v", err)
+	}
+
+	originalRead := readGatewayPIDDataForRuntime
+	originalDo := gatewayRuntimeDo
+	t.Cleanup(func() {
+		readGatewayPIDDataForRuntime = originalRead
+		gatewayRuntimeDo = originalDo
+	})
+
+	readGatewayPIDDataForRuntime = func() *ppid.PidFileData {
+		return &ppid.PidFileData{PID: 123, Host: "127.0.0.1", Port: 18790, Token: "pid-secret"}
+	}
+	gatewayRuntimeDo = func(req *http.Request, timeout time.Duration) (*http.Response, error) {
+		if req.Method != http.MethodGet {
+			t.Fatalf("Method = %s, want GET", req.Method)
+		}
+		if req.URL.String() != "http://127.0.0.1:18790/runtime/agent/tasks/main/subagent-9" {
+			t.Fatalf("URL = %q", req.URL.String())
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body: io.NopCloser(strings.NewReader(`{
+				"owner_agent_id":"main",
+				"id":"subagent-9",
+				"status":"running",
+				"cancelable":true
+			}`)),
+			Header: make(http.Header),
+		}, nil
+	}
+
+	h := NewHandler(configPath)
+	mux := http.NewServeMux()
+	h.registerAgentRuntimeRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/agent/runtime/tasks/main/subagent-9", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"cancelable":true`) {
+		t.Fatalf("response missing cancelable flag: %s", rec.Body.String())
+	}
+}
+
+func TestHandleCancelAgentRuntimeTask_ProxyConflict(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	cfg := config.DefaultConfig()
+	if err := config.SaveConfig(configPath, cfg); err != nil {
+		t.Fatalf("SaveConfig() error = %v", err)
+	}
+
+	originalRead := readGatewayPIDDataForRuntime
+	originalDo := gatewayRuntimeDo
+	t.Cleanup(func() {
+		readGatewayPIDDataForRuntime = originalRead
+		gatewayRuntimeDo = originalDo
+	})
+
+	readGatewayPIDDataForRuntime = func() *ppid.PidFileData {
+		return &ppid.PidFileData{PID: 123, Host: "127.0.0.1", Port: 18790, Token: "pid-secret"}
+	}
+	gatewayRuntimeDo = func(req *http.Request, timeout time.Duration) (*http.Response, error) {
+		if req.Method != http.MethodPost {
+			t.Fatalf("Method = %s, want POST", req.Method)
+		}
+		if req.URL.String() != "http://127.0.0.1:18790/runtime/agent/tasks/main/subagent-9/cancel" {
+			t.Fatalf("URL = %q", req.URL.String())
+		}
+		return &http.Response{
+			StatusCode: http.StatusConflict,
+			Status:     "409 Conflict",
+			Body:       io.NopCloser(strings.NewReader(`task "subagent-9" is not cancelable`)),
+			Header:     make(http.Header),
+		}, nil
+	}
+
+	h := NewHandler(configPath)
+	mux := http.NewServeMux()
+	h.registerAgentRuntimeRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/agent/runtime/tasks/main/subagent-9/cancel", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusConflict, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "not cancelable") {
+		t.Fatalf("body = %q, want cancelable error", rec.Body.String())
+	}
+}

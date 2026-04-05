@@ -44,6 +44,7 @@ type RuntimeTeammateInfo struct {
 
 type RuntimeTaskInfo struct {
 	OwnerAgentID string `json:"owner_agent_id"`
+	Cancelable   bool   `json:"cancelable,omitempty"`
 	tools.SubagentTask
 }
 
@@ -141,10 +142,7 @@ func collectRuntimeTasks(registry *AgentRegistry, agentIDs []string) []RuntimeTa
 		}
 
 		for _, task := range manager.ListTaskCopies() {
-			tasks = append(tasks, RuntimeTaskInfo{
-				OwnerAgentID: agentID,
-				SubagentTask: task,
-			})
+			tasks = append(tasks, runtimeTaskInfo(agentID, task))
 		}
 	}
 
@@ -172,4 +170,43 @@ func collectRuntimeTasks(registry *AgentRegistry, agentIDs []string) []RuntimeTa
 	})
 
 	return tasks
+}
+
+func runtimeTaskInfo(ownerAgentID string, task tools.SubagentTask) RuntimeTaskInfo {
+	return RuntimeTaskInfo{
+		OwnerAgentID: ownerAgentID,
+		Cancelable:   runtimeTaskCancelable(task),
+		SubagentTask: task,
+	}
+}
+
+func runtimeTaskCancelable(task tools.SubagentTask) bool {
+	switch strings.ToLower(strings.TrimSpace(task.Status)) {
+	case "queued", "running":
+		return true
+	default:
+		return false
+	}
+}
+
+func runtimeTaskManagerForAgent(registry *AgentRegistry, agentID string) *tools.SubagentManager {
+	if registry == nil {
+		return nil
+	}
+	agentInst, ok := registry.GetAgent(agentID)
+	if !ok || agentInst == nil || agentInst.Tools == nil {
+		return nil
+	}
+
+	if rawTool, ok := agentInst.Tools.Get("spawn_status"); ok {
+		if provider, ok := rawTool.(subagentManagerProvider); ok {
+			return provider.Manager()
+		}
+	}
+	if rawTool, ok := agentInst.Tools.Get("spawn"); ok {
+		if provider, ok := rawTool.(subagentManagerProvider); ok {
+			return provider.Manager()
+		}
+	}
+	return nil
 }

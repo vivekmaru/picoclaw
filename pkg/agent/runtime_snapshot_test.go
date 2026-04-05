@@ -97,4 +97,92 @@ func TestAgentLoopGetRuntimeSnapshotIncludesTeammatesAndTasks(t *testing.T) {
 	if snapshot.Tasks[0].MemoryScope != "teammate:reviewer" {
 		t.Fatalf("task.MemoryScope = %q, want teammate:reviewer", snapshot.Tasks[0].MemoryScope)
 	}
+	if snapshot.Tasks[0].Cancelable {
+		t.Fatal("terminal task should not be cancelable")
+	}
+}
+
+func TestAgentLoopRuntimeTaskActions(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Agents.Defaults.Workspace = t.TempDir()
+	cfg.Tools.Subagent.Enabled = true
+	cfg.Tools.Spawn.Enabled = true
+	cfg.Tools.SpawnStatus.Enabled = true
+	cfg.Agents.List = []config.AgentConfig{
+		{ID: "main", Default: true, Name: "Main"},
+	}
+
+	loop := NewAgentLoop(cfg, bus.NewMessageBus(), &mockProvider{})
+	t.Cleanup(func() {
+		loop.GetRegistry().Close()
+	})
+
+	agentInst := loop.GetRegistry().GetDefaultAgent()
+	if agentInst == nil {
+		t.Fatal("expected default agent")
+	}
+
+	rawSpawn, ok := agentInst.Tools.Get("spawn")
+	if !ok {
+		t.Fatal("expected spawn tool")
+	}
+	managerProvider, ok := rawSpawn.(runtimeManagerProvider)
+	if !ok || managerProvider.Manager() == nil {
+		t.Fatal("expected spawn tool to expose manager")
+	}
+	manager := managerProvider.Manager()
+
+	started := make(chan struct{})
+	manager.SetSpawner(func(
+		ctx context.Context,
+		task, label, targetAgentID, teammateID string,
+		tls *tools.ToolRegistry,
+		maxTokens int,
+		temperature float64,
+		hasMaxTokens, hasTemperature bool,
+	) (*tools.ToolResult, error) {
+		close(started)
+		<-ctx.Done()
+		return nil, ctx.Err()
+	})
+
+	task, err := manager.Spawn(context.Background(), tools.SpawnRequest{
+		Task:             "Investigate live runtime task actions",
+		RequesterAgentID: "main",
+	}, nil)
+	if err != nil {
+		t.Fatalf("Spawn() error = %v", err)
+	}
+	<-started
+
+	info, err := loop.GetRuntimeTask("main", task.ID)
+	if err != nil {
+		t.Fatalf("GetRuntimeTask() error = %v", err)
+	}
+	if !info.Cancelable {
+		t.Fatal("running task should be cancelable")
+	}
+
+	cancelled, err := loop.CancelRuntimeTask("main", task.ID)
+	if err != nil {
+		t.Fatalf("CancelRuntimeTask() error = %v", err)
+	}
+	if cancelled.Status != "canceling" {
+		t.Fatalf("CancelRuntimeTask() status = %q, want canceling", cancelled.Status)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		current, ok := manager.GetTaskCopy(task.ID)
+		if !ok {
+			t.Fatalf("task %s disappeared", task.ID)
+		}
+		if current.Status == "canceled" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("task %s did not cancel, status=%s", task.ID, current.Status)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }

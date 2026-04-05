@@ -3,8 +3,11 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // mockSpawner implements SubTurnSpawner for testing
@@ -148,5 +151,124 @@ func TestSpawnTool_Execute_NilManager(t *testing.T) {
 	}
 	if !strings.Contains(result.ForLLM, "Subagent manager not configured") {
 		t.Errorf("Error message should mention manager not configured, got: %s", result.ForLLM)
+	}
+}
+
+func TestSubagentManager_LoadPersistedTasksMarksInterrupted(t *testing.T) {
+	workspace := t.TempDir()
+	stateFile := filepath.Join(workspace, "state", "subagents", "tasks.json")
+	storeData, err := json.MarshalIndent(subagentTaskStore{
+		Version: subagentTaskStoreVersion,
+		NextID:  4,
+		Tasks: []SubagentTask{
+			{ID: "subagent-1", Task: "queued work", Status: "queued", Created: 1},
+			{ID: "subagent-2", Task: "running work", Status: "running", Created: 2},
+			{ID: "subagent-3", Task: "done work", Status: "completed", Created: 3},
+		},
+	}, "", "  ")
+	if err != nil {
+		t.Fatalf("MarshalIndent() error = %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(stateFile), 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(stateFile, storeData, 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	manager := NewSubagentManager(&MockLLMProvider{}, "test-model", workspace)
+
+	task1, ok := manager.GetTaskCopy("subagent-1")
+	if !ok {
+		t.Fatal("expected queued task to be loaded")
+	}
+	if task1.Status != "failed" {
+		t.Fatalf("task1.Status = %q, want failed", task1.Status)
+	}
+	if task1.Completed == 0 {
+		t.Fatal("task1.Completed should be set during restart recovery")
+	}
+
+	task2, ok := manager.GetTaskCopy("subagent-2")
+	if !ok {
+		t.Fatal("expected running task to be loaded")
+	}
+	if task2.Status != "failed" {
+		t.Fatalf("task2.Status = %q, want failed", task2.Status)
+	}
+
+	manager.SetSpawner(func(
+		ctx context.Context,
+		task, label, agentID, teammateID string,
+		tls *ToolRegistry,
+		maxTokens int,
+		temperature float64,
+		hasMaxTokens, hasTemperature bool,
+	) (*ToolResult, error) {
+		return &ToolResult{ForLLM: "done"}, nil
+	})
+	spawned, err := manager.Spawn(context.Background(), SpawnRequest{Task: "fresh task"}, nil)
+	if err != nil {
+		t.Fatalf("Spawn() error = %v", err)
+	}
+	if spawned.ID != "subagent-4" {
+		t.Fatalf("spawned.ID = %q, want subagent-4", spawned.ID)
+	}
+}
+
+func TestSubagentManager_CancelTaskPersistsState(t *testing.T) {
+	workspace := t.TempDir()
+	manager := NewSubagentManager(&MockLLMProvider{}, "test-model", workspace)
+
+	started := make(chan struct{})
+	manager.SetSpawner(func(
+		ctx context.Context,
+		task, label, agentID, teammateID string,
+		tls *ToolRegistry,
+		maxTokens int,
+		temperature float64,
+		hasMaxTokens, hasTemperature bool,
+	) (*ToolResult, error) {
+		close(started)
+		<-ctx.Done()
+		return nil, ctx.Err()
+	})
+
+	task, err := manager.Spawn(context.Background(), SpawnRequest{Task: "long task"}, nil)
+	if err != nil {
+		t.Fatalf("Spawn() error = %v", err)
+	}
+	<-started
+
+	cancelled, err := manager.CancelTask(task.ID)
+	if err != nil {
+		t.Fatalf("CancelTask() error = %v", err)
+	}
+	if cancelled.Status != "canceling" {
+		t.Fatalf("CancelTask() status = %q, want canceling", cancelled.Status)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		current, ok := manager.GetTaskCopy(task.ID)
+		if !ok {
+			t.Fatalf("task %s disappeared", task.ID)
+		}
+		if current.Status == "canceled" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("task %s did not cancel, status=%s", task.ID, current.Status)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	stateFile := filepath.Join(workspace, "state", "subagents", "tasks.json")
+	data, err := os.ReadFile(stateFile)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if !strings.Contains(string(data), `"status": "canceled"`) {
+		t.Fatalf("persisted task store missing canceled status: %s", string(data))
 	}
 }

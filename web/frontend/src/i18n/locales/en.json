@@ -398,6 +398,12 @@
         "task_description": "Tracked spawned tasks visible from the running gateway.",
         "tasks_empty": "No tracked delegation tasks yet.",
         "load_error": "Failed to load live teammate runtime data.",
+        "task_detail_title": "Task Detail",
+        "task_detail_description": "Inspect the selected task and control it when cancellation is still available.",
+        "task_detail_empty": "Select a tracked task to inspect it here.",
+        "task_detail_loading": "Loading the latest task detail...",
+        "task_cancel_success": "Cancellation requested for {{id}}.",
+        "task_cancel_error": "Failed to cancel the selected task.",
         "summary": {
           "agents": "Agents",
           "agents_desc": "Runtime execution units currently registered.",
@@ -405,6 +411,15 @@
           "teammates_desc": "Resolved teammate profiles available for delegation.",
           "tasks": "Tracked Tasks",
           "tasks_desc": "Delegation tasks currently tracked across agents."
+        },
+        "filters": {
+          "status_all": "All statuses",
+          "search_placeholder": "Filter by task, teammate, requester, or task ID",
+          "no_results": "No tasks match the current filters."
+        },
+        "task_actions": {
+          "cancel": "Cancel Task",
+          "canceling": "Canceling..."
         },
         "fields": {
           "agent": "Agent",
@@ -416,9 +431,17 @@
         },
         "task_fields": {
           "requester": "Requester",
+          "agent": "Target Agent",
           "memory": "Memory Scope",
+          "status": "Status",
+          "channel": "Origin Channel",
+          "chat": "Origin Chat",
+          "kind": "Kind",
           "created": "Created",
-          "completed": "Completed"
+          "started": "Started",
+          "completed": "Completed",
+          "workspaces": "Workspace Scope",
+          "result": "Result"
         }
       },
       "skills": {

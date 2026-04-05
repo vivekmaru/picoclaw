@@ -4,11 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
+	"os"
+	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/sipeed/picoclaw/pkg/fileutil"
 	"github.com/sipeed/picoclaw/pkg/providers"
 )
 
@@ -90,10 +96,12 @@ type TeammateResolver func(teammateID string) (TaskTeammate, bool)
 
 type SubagentManager struct {
 	tasks          map[string]*SubagentTask
+	cancels        map[string]context.CancelFunc
 	mu             sync.RWMutex
 	provider       providers.LLMProvider
 	defaultModel   string
 	workspace      string
+	stateFile      string
 	tools          *ToolRegistry
 	maxIterations  int
 	maxTokens      int
@@ -111,19 +119,33 @@ type SubagentManager struct {
 	mediaResolver func([]providers.Message) []providers.Message
 }
 
+type subagentTaskStore struct {
+	Version int            `json:"version"`
+	NextID  int            `json:"next_id"`
+	Tasks   []SubagentTask `json:"tasks"`
+}
+
+const subagentTaskStoreVersion = 1
+
 func NewSubagentManager(
 	provider providers.LLMProvider,
 	defaultModel, workspace string,
 ) *SubagentManager {
-	return &SubagentManager{
+	sm := &SubagentManager{
 		tasks:         make(map[string]*SubagentTask),
+		cancels:       make(map[string]context.CancelFunc),
 		provider:      provider,
 		defaultModel:  defaultModel,
 		workspace:     workspace,
+		stateFile:     filepath.Join(workspace, "state", "subagents", "tasks.json"),
 		tools:         NewToolRegistry(),
 		maxIterations: 10,
 		nextID:        1,
 	}
+	if err := sm.loadPersistedTasks(); err != nil {
+		log.Printf("[WARN] subagent: failed to load persisted tasks: %v", err)
+	}
+	return sm
 }
 
 func (sm *SubagentManager) SetSpawner(spawner SpawnSubTurnFunc) {
@@ -211,9 +233,17 @@ func (sm *SubagentManager) Spawn(ctx context.Context, req SpawnRequest, callback
 		Created:             time.Now().UnixMilli(),
 	}
 	sm.tasks[taskID] = subagentTask
+	taskCtx, cancel := context.WithCancel(ctx)
+	sm.cancels[taskID] = cancel
+	if err := sm.persistLocked(); err != nil {
+		delete(sm.tasks, taskID)
+		delete(sm.cancels, taskID)
+		cancel()
+		return SubagentTask{}, fmt.Errorf("persist tracked task: %w", err)
+	}
 
 	// Start task in background with context cancellation support
-	go sm.runTask(ctx, subagentTask, callback)
+	go sm.runTask(taskCtx, subagentTask, callback)
 
 	return *subagentTask, nil
 }
@@ -223,22 +253,42 @@ func (sm *SubagentManager) runTask(
 	task *SubagentTask,
 	callback AsyncCallback,
 ) {
-	task.Status = "running"
-	task.Started = time.Now().UnixMilli()
-	// TODO(eventbus): once subagents are modeled as child turns inside
-	// pkg/agent, emit SubTurnEnd and SubTurnResultDelivered from the parent
-	// AgentLoop instead of this legacy manager.
-
-	// Check if context is already canceled before starting
+	// Check if context is already canceled before marking the task as running.
 	select {
 	case <-ctx.Done():
 		sm.mu.Lock()
-		task.Status = "canceled"
-		task.Result = "Task canceled before execution"
+		if !isSubagentTaskTerminal(task.Status) {
+			task.Status = "canceled"
+			task.Result = "Task canceled before execution"
+			task.Completed = time.Now().UnixMilli()
+		}
+		delete(sm.cancels, task.ID)
+		if err := sm.persistLocked(); err != nil {
+			log.Printf("[WARN] subagent: failed to persist canceled task %s: %v", task.ID, err)
+		}
 		sm.mu.Unlock()
 		return
 	default:
 	}
+
+	sm.mu.Lock()
+	if task.Status == "canceled" {
+		delete(sm.cancels, task.ID)
+		if err := sm.persistLocked(); err != nil {
+			log.Printf("[WARN] subagent: failed to persist pre-canceled task %s: %v", task.ID, err)
+		}
+		sm.mu.Unlock()
+		return
+	}
+	task.Status = "running"
+	task.Started = time.Now().UnixMilli()
+	if err := sm.persistLocked(); err != nil {
+		log.Printf("[WARN] subagent: failed to persist running task %s: %v", task.ID, err)
+	}
+	sm.mu.Unlock()
+	// TODO(eventbus): once subagents are modeled as child turns inside
+	// pkg/agent, emit SubTurnEnd and SubTurnResultDelivered from the parent
+	// AgentLoop instead of this legacy manager.
 
 	sm.mu.RLock()
 	spawner := sm.spawner
@@ -317,6 +367,10 @@ After completing the task, provide a clear summary of what was done.`
 
 	sm.mu.Lock()
 	defer func() {
+		delete(sm.cancels, task.ID)
+		if err := sm.persistLocked(); err != nil {
+			log.Printf("[WARN] subagent: failed to persist final task state %s: %v", task.ID, err)
+		}
 		sm.mu.Unlock()
 		// Call callback if provided and result is set
 		if callback != nil && result != nil {
@@ -347,6 +401,44 @@ After completing the task, provide a clear summary of what was done.`
 		task.Result = result.ForLLM
 		task.Completed = time.Now().UnixMilli()
 	}
+}
+
+func (sm *SubagentManager) CancelTask(taskID string) (SubagentTask, error) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	task, ok := sm.tasks[taskID]
+	if !ok {
+		return SubagentTask{}, fmt.Errorf("task %q not found", taskID)
+	}
+
+	switch task.Status {
+	case "queued":
+		task.Status = "canceled"
+		task.Result = "Task canceled before execution"
+		task.Completed = time.Now().UnixMilli()
+	case "running":
+		task.Status = "canceling"
+		if task.Result == "" {
+			task.Result = "Cancellation requested"
+		}
+	case "canceling":
+		return *task, nil
+	default:
+		return SubagentTask{}, fmt.Errorf("task %q is not cancelable", taskID)
+	}
+
+	cancel := sm.cancels[taskID]
+	if task.Status == "canceled" {
+		delete(sm.cancels, taskID)
+	}
+	if err := sm.persistLocked(); err != nil {
+		return SubagentTask{}, fmt.Errorf("persist canceled task: %w", err)
+	}
+	if cancel != nil {
+		cancel()
+	}
+	return *task, nil
 }
 
 func (sm *SubagentManager) SupportsTrackedSpawn() bool {
@@ -407,6 +499,123 @@ func (sm *SubagentManager) ListTaskCopies() []SubagentTask {
 		copies = append(copies, *task)
 	}
 	return copies
+}
+
+func (sm *SubagentManager) loadPersistedTasks() error {
+	if sm == nil || strings.TrimSpace(sm.stateFile) == "" {
+		return nil
+	}
+	data, err := os.ReadFile(sm.stateFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+
+	var store subagentTaskStore
+	if err := json.Unmarshal(data, &store); err != nil {
+		return err
+	}
+	if store.Version != 0 && store.Version != subagentTaskStoreVersion {
+		return fmt.Errorf(
+			"unsupported subagent task store version: got %d, want %d",
+			store.Version,
+			subagentTaskStoreVersion,
+		)
+	}
+
+	now := time.Now().UnixMilli()
+	needsRewrite := false
+	maxID := 0
+	for i := range store.Tasks {
+		task := store.Tasks[i]
+		if isSubagentTaskTerminal(task.Status) {
+			// Keep the stored state as-is.
+		} else {
+			task.Status = "failed"
+			if strings.TrimSpace(task.Result) == "" {
+				task.Result = "Task interrupted before completion during restart"
+			}
+			if task.Completed == 0 {
+				task.Completed = now
+			}
+			needsRewrite = true
+		}
+		sm.tasks[task.ID] = &task
+		if parsedID := parseSubagentTaskNumericID(task.ID); parsedID > maxID {
+			maxID = parsedID
+		}
+	}
+
+	if store.NextID > maxID {
+		sm.nextID = store.NextID
+	} else if maxID > 0 {
+		sm.nextID = maxID + 1
+	}
+
+	if needsRewrite {
+		return sm.persistLocked()
+	}
+	return nil
+}
+
+func (sm *SubagentManager) persistLocked() error {
+	if sm == nil || strings.TrimSpace(sm.stateFile) == "" {
+		return nil
+	}
+
+	tasks := make([]SubagentTask, 0, len(sm.tasks))
+	for _, task := range sm.tasks {
+		tasks = append(tasks, *task)
+	}
+	slices.SortFunc(tasks, func(a, b SubagentTask) int {
+		if a.Created != b.Created {
+			if a.Created < b.Created {
+				return -1
+			}
+			return 1
+		}
+		switch {
+		case a.ID < b.ID:
+			return -1
+		case a.ID > b.ID:
+			return 1
+		default:
+			return 0
+		}
+	})
+
+	payload, err := json.MarshalIndent(subagentTaskStore{
+		Version: subagentTaskStoreVersion,
+		NextID:  sm.nextID,
+		Tasks:   tasks,
+	}, "", "  ")
+	if err != nil {
+		return err
+	}
+	return fileutil.WriteFileAtomic(sm.stateFile, payload, 0o600)
+}
+
+func isSubagentTaskTerminal(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "completed", "failed", "canceled":
+		return true
+	default:
+		return false
+	}
+}
+
+func parseSubagentTaskNumericID(taskID string) int {
+	const prefix = "subagent-"
+	if !strings.HasPrefix(taskID, prefix) {
+		return 0
+	}
+	id, err := strconv.Atoi(strings.TrimPrefix(taskID, prefix))
+	if err != nil || id < 0 {
+		return 0
+	}
+	return id
 }
 
 // SubagentTool executes a subagent task synchronously and returns the result.

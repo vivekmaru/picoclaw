@@ -398,6 +398,12 @@
         "task_description": "展示运行中网关跟踪的委派任务。",
         "tasks_empty": "当前还没有委派任务。",
         "load_error": "加载队友运行时数据失败。",
+        "task_detail_title": "任务详情",
+        "task_detail_description": "查看当前选中任务的完整状态，并在仍可取消时发起取消。",
+        "task_detail_empty": "请选择一个已跟踪任务以查看详情。",
+        "task_detail_loading": "正在加载最新任务详情...",
+        "task_cancel_success": "已为 {{id}} 发起取消请求。",
+        "task_cancel_error": "取消所选任务失败。",
         "summary": {
           "agents": "Agents",
           "agents_desc": "当前注册的运行单元数量。",
@@ -405,6 +411,15 @@
           "teammates_desc": "当前可用于委派的队友配置数量。",
           "tasks": "任务",
           "tasks_desc": "当前已跟踪的委派任务数量。"
+        },
+        "filters": {
+          "status_all": "全部状态",
+          "search_placeholder": "按任务、队友、请求方或任务 ID 过滤",
+          "no_results": "当前筛选条件下没有匹配的任务。"
+        },
+        "task_actions": {
+          "cancel": "取消任务",
+          "canceling": "取消中..."
         },
         "fields": {
           "agent": "Agent",
@@ -416,9 +431,17 @@
         },
         "task_fields": {
           "requester": "请求方",
+          "agent": "目标 Agent",
           "memory": "记忆作用域",
+          "status": "状态",
+          "channel": "来源频道",
+          "chat": "来源会话",
+          "kind": "类型",
           "created": "创建时间",
-          "completed": "完成时间"
+          "started": "开始时间",
+          "completed": "完成时间",
+          "workspaces": "工作区范围",
+          "result": "结果"
         }
       },
       "skills": {
