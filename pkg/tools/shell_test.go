@@ -802,6 +802,24 @@ func TestShellTool_List_Empty(t *testing.T) {
 	require.Contains(t, result.ForUser, "0 active sessions")
 }
 
+func TestExtractExecTarget_ShellAwareAssignments(t *testing.T) {
+	tests := []struct {
+		command string
+		want    string
+	}{
+		{command: `FOO='hello world' echo ok`, want: "echo"},
+		{command: `FOO="hello world" BAR=baz /usr/bin/env printf test`, want: "printf"},
+		{command: `env FOO='hello world' /bin/echo ok`, want: "echo"},
+		{command: `echo 'hello world'`, want: "echo"},
+	}
+
+	for _, tt := range tests {
+		if got := extractExecTarget(tt.command); got != tt.want {
+			t.Fatalf("extractExecTarget(%q) = %q, want %q", tt.command, got, tt.want)
+		}
+	}
+}
+
 func TestShellTool_RunBackground_List(t *testing.T) {
 	tool, err := NewExecTool("", false)
 	require.NoError(t, err)

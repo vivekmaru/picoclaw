@@ -115,6 +115,8 @@ var (
 		"/dev/stdout":  true,
 		"/dev/stderr":  true,
 	}
+
+	envAssignmentPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)
 )
 
 func NewExecTool(workingDir string, restrict bool, allowPaths ...[]*regexp.Regexp) (*ExecTool, error) {
@@ -1222,20 +1224,63 @@ func matchesAnyPattern(value string, patterns []*regexp.Regexp) bool {
 }
 
 func extractExecTarget(command string) string {
-	for _, field := range strings.Fields(command) {
-		if field == "env" {
+	for _, field := range splitShellWords(command) {
+		if envAssignmentPattern.MatchString(field) && !strings.HasPrefix(field, "/") {
 			continue
 		}
-		if strings.Contains(field, "=") && !strings.HasPrefix(field, "/") {
-			continue
-		}
-		field = strings.Trim(field, `"'`)
 		if field == "" {
 			continue
 		}
-		return filepath.Base(field)
+		target := filepath.Base(field)
+		if target == "env" {
+			continue
+		}
+		return target
 	}
 	return ""
+}
+
+func splitShellWords(command string) []string {
+	var words []string
+	var current strings.Builder
+	var quote rune
+	escaped := false
+
+	flush := func() {
+		if current.Len() == 0 {
+			return
+		}
+		words = append(words, current.String())
+		current.Reset()
+	}
+
+	for _, r := range command {
+		switch {
+		case escaped:
+			current.WriteRune(r)
+			escaped = false
+		case r == '\\' && quote != '\'':
+			escaped = true
+		case quote != 0:
+			if r == quote {
+				quote = 0
+			} else {
+				current.WriteRune(r)
+			}
+		case r == '\'' || r == '"':
+			quote = r
+		case r == ' ' || r == '\t' || r == '\n' || r == '\r':
+			flush()
+		default:
+			current.WriteRune(r)
+		}
+	}
+
+	if escaped {
+		current.WriteRune('\\')
+	}
+	flush()
+	return words
 }
 
 func (t *ExecTool) SetTimeout(timeout time.Duration) {
