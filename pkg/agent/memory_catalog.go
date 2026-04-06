@@ -399,9 +399,19 @@ func parseRuntimeMemoryCatalogEntries(ownerAgentID, workspace string, mem *Memor
 	}
 
 	entries := make([]RuntimeMemoryEntryInfo, 0, len(parsed))
-	for _, section := range parsed {
+	baseIDs := make([]string, len(parsed))
+	baseIDCounts := make(map[string]int, len(parsed))
+	for i, section := range parsed {
+		baseID := runtimeMemoryCatalogEntryBaseID(ownerAgentID, workspace, mem.Scope(), mem.LongTermPath(), section)
+		baseIDs[i] = baseID
+		baseIDCounts[baseID]++
+	}
+	baseIDSeen := make(map[string]int, len(baseIDCounts))
+	for i, section := range parsed {
+		baseID := baseIDs[i]
+		baseIDSeen[baseID]++
 		entry := RuntimeMemoryEntryInfo{
-			ID:               runtimeMemoryCatalogEntryID(ownerAgentID, workspace, mem.Scope(), mem.LongTermPath(), section),
+			ID:               runtimeMemoryCatalogEntryID(baseID, baseIDSeen[baseID], baseIDCounts[baseID]),
 			OwnerAgentID:     ownerAgentID,
 			Workspace:        workspace,
 			Scope:            mem.Scope(),
@@ -430,7 +440,7 @@ func parseRuntimeMemoryCatalogEntries(ownerAgentID, workspace string, mem *Memor
 	return entries
 }
 
-func runtimeMemoryCatalogEntryID(
+func runtimeMemoryCatalogEntryBaseID(
 	ownerAgentID, workspace, scope, sourcePath string,
 	section runtimeMemoryParsedSection,
 ) string {
@@ -450,6 +460,13 @@ func runtimeMemoryCatalogEntryID(
 		section.ReviewedBy,
 	}, "\x00")))
 	return "memory-" + hex.EncodeToString(sum[:12])
+}
+
+func runtimeMemoryCatalogEntryID(baseID string, occurrence, total int) string {
+	if total <= 1 {
+		return baseID
+	}
+	return fmt.Sprintf("%s-dup-%d", baseID, occurrence)
 }
 
 type runtimeMemoryCatalogSection struct {

@@ -260,6 +260,59 @@ func TestRuntimeMemoryCatalogStateStoreSharedByWorkspace(t *testing.T) {
 	}
 }
 
+func TestAgentLoop_MemoryCatalogDuplicateEntriesGetDistinctLifecycleIDs(t *testing.T) {
+	workspace := t.TempDir()
+	mem := NewMemoryStoreForScope(workspace, "shared")
+	duplicate := strings.Join([]string{
+		"## Duplicate Entry",
+		"",
+		"- Added: 2026-04-07 12:00:00 UTC",
+		"- Domain: shared_team",
+		"",
+		"Same body",
+	}, "\n")
+	if err := mem.WriteLongTerm(duplicate + "\n\n" + duplicate); err != nil {
+		t.Fatalf("WriteLongTerm() error = %v", err)
+	}
+
+	loop := &AgentLoop{registry: &AgentRegistry{
+		agents: map[string]*AgentInstance{
+			"main": {ID: "main", Workspace: workspace},
+		},
+	}}
+	catalog := loop.GetRuntimeMemoryCatalog()
+	if len(catalog.Entries) != 2 {
+		t.Fatalf("len(Entries) = %d, want 2", len(catalog.Entries))
+	}
+	first := catalog.Entries[0]
+	second := catalog.Entries[1]
+	if first.ID == second.ID {
+		t.Fatalf("duplicate entries share ID %q", first.ID)
+	}
+
+	pinned, err := loop.PinRuntimeMemoryCatalogEntry(first.ID, "launcher")
+	if err != nil {
+		t.Fatalf("PinRuntimeMemoryCatalogEntry() error = %v", err)
+	}
+	if !pinned.Pinned {
+		t.Fatalf("expected pinned entry to be pinned: %#v", pinned)
+	}
+
+	updated := loop.GetRuntimeMemoryCatalog()
+	if len(updated.Entries) != 2 {
+		t.Fatalf("len(updated.Entries) = %d, want 2", len(updated.Entries))
+	}
+	var pinnedCount int
+	for _, entry := range updated.Entries {
+		if entry.Pinned {
+			pinnedCount++
+		}
+	}
+	if pinnedCount != 1 {
+		t.Fatalf("PinnedCount among duplicates = %d, want 1", pinnedCount)
+	}
+}
+
 func TestAgentLoop_GetRuntimeMemoryCatalog_LegacyMemoryFallback(t *testing.T) {
 	workspace := t.TempDir()
 	mem := NewMemoryStoreForScope(workspace, "shared")
