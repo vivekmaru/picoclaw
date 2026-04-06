@@ -10,8 +10,8 @@ tools". A practical deployment shape is:
 - one private gateway
 - one or more agents
 - teammate profiles for `coder`, `reviewer`, `operator`, or `researcher`
-- launcher review surfaces for tasks, approvals, memory proposals, and task
-  handoffs
+- launcher review surfaces for tasks, approvals, memory proposals, approved
+  memory catalog browsing, and task handoffs
 
 This is a good fit when you want PicoClaw to coordinate Claude Code, Codex, or
 other local coding tools without turning them into an unconstrained autonomous
@@ -96,8 +96,8 @@ Examples:
 
 - use Telegram or Discord for daily interaction
 - keep the launcher private for model, channel, and admin changes
-- use the launcher runtime page for task approvals, memory review, and follow-up
-  task handoffs
+- use the launcher runtime page for task approvals, memory review, approved
+  memory browsing/export, and follow-up task handoffs
 - use the launcher logs and health views for lightweight operations
 
 ## 9. Codex And Claude Code Integration

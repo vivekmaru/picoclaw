@@ -82,6 +82,14 @@ Memory proposals can now carry richer review metadata such as:
 That metadata is visible in the launcher review queue and is written into the
 approved memory entry so long-term memory remains inspectable outside the UI.
 
+Approved long-term memory is now also readable back through a runtime memory
+catalog. That catalog:
+
+- enumerates shared and scoped memory namespaces across active workspaces
+- parses reviewed memory entries back into structured records
+- preserves legacy free-form `MEMORY.md` content as legacy catalog entries
+- can be exported from the launcher as Markdown or JSON for backup and audit
+
 Delegation state now also persists under `workspace/state/subagents/<agent-id>/`.
 Tracked tasks can form explicit parent/child handoff chains, so the launcher
 can show:
@@ -154,6 +162,8 @@ The runtime can load capabilities from:
    Pico channel.
 4. The teammate runtime page polls live task, approval, memory-review, and
    handoff-chain state from the gateway runtime APIs.
+5. The same launcher surface now also reads the approved memory catalog and can
+   export it for offline inspection or backup.
 
 ## Trust Boundaries
 

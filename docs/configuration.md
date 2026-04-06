@@ -292,6 +292,7 @@ delegation via `teammate_id`.
 - tracked spawn tasks can now enter review, memory-promotion, and handoff flows in the launcher runtime page.
 - completed tasks can hand work off to another teammate, creating parent/child task lineage for review chains such as `coder -> reviewer`.
 - memory proposals in the launcher review queue can now be classified with `domain`, `entry_type`, and optional `confidence`.
+- approved memory entries are now reindexed into a launcher-visible memory catalog that can be filtered by scope, domain, and type, then exported as Markdown or JSON.
 | `match.team_id` | No | Team/workspace-level match |
 
 #### Matching priority

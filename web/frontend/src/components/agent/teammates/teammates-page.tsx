@@ -12,12 +12,16 @@ import {
   approveAgentRuntimeTask,
   cancelAgentRuntimeTask,
   createAgentRuntimeMemoryProposal,
+  downloadAgentRuntimeMemoryCatalog,
   getAgentRuntime,
+  getAgentRuntimeMemoryCatalog,
   getAgentRuntimeTask,
   handoffAgentRuntimeTask,
   rejectAgentRuntimeMemoryProposal,
   rejectAgentRuntimeTask,
   updateAgentRuntimeMemoryProposal,
+  type AgentRuntimeMemoryCatalog,
+  type AgentRuntimeMemoryCatalogEntry,
   type AgentRuntimeMemoryProposal,
   type AgentRuntimeSnapshot,
   type AgentRuntimeTask,
@@ -83,8 +87,13 @@ export function TeammatesPage() {
   const [memoryFilter, setMemoryFilter] = useState("")
   const [memoryDomainFilter, setMemoryDomainFilter] = useState("all")
   const [memoryTypeFilter, setMemoryTypeFilter] = useState("all")
+  const [catalogFilter, setCatalogFilter] = useState("")
+  const [catalogScopeFilter, setCatalogScopeFilter] = useState("all")
+  const [catalogDomainFilter, setCatalogDomainFilter] = useState("all")
+  const [catalogTypeFilter, setCatalogTypeFilter] = useState("all")
   const [selectedTaskKey, setSelectedTaskKey] = useState("")
   const [selectedProposalKey, setSelectedProposalKey] = useState("")
+  const [selectedCatalogEntryKey, setSelectedCatalogEntryKey] = useState("")
   const [taskReviewForms, setTaskReviewForms] = useState<
     Record<string, { actor: string; note: string }>
   >({})
@@ -98,6 +107,12 @@ export function TeammatesPage() {
   const { data, isLoading, error } = useQuery({
     queryKey: ["agent-runtime"],
     queryFn: getAgentRuntime,
+    refetchInterval: RUNTIME_POLL_MS,
+  })
+
+  const memoryCatalogQuery = useQuery({
+    queryKey: ["agent-runtime", "memory-catalog"],
+    queryFn: getAgentRuntimeMemoryCatalog,
     refetchInterval: RUNTIME_POLL_MS,
   })
 
@@ -139,6 +154,40 @@ export function TeammatesPage() {
         ),
       ).sort((a, b) => a.localeCompare(b)),
     [data?.memory_proposals],
+  )
+
+  const catalogScopeEntries = useMemo(
+    () =>
+      (memoryCatalogQuery.data?.scopes ?? []).slice().sort((a, b) =>
+        [a.display_name, a.scope, a.owner_agent_id].join("\n").localeCompare(
+          [b.display_name, b.scope, b.owner_agent_id].join("\n"),
+        ),
+      ),
+    [memoryCatalogQuery.data?.scopes],
+  )
+
+  const catalogDomainEntries = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          (memoryCatalogQuery.data?.entries ?? [])
+            .map((entry) => entry.domain)
+            .filter((value): value is string => Boolean(value)),
+        ),
+      ).sort((a, b) => a.localeCompare(b)),
+    [memoryCatalogQuery.data?.entries],
+  )
+
+  const catalogTypeEntries = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          (memoryCatalogQuery.data?.entries ?? [])
+            .map((entry) => entry.entry_type)
+            .filter((value): value is string => Boolean(value)),
+        ),
+      ).sort((a, b) => a.localeCompare(b)),
+    [memoryCatalogQuery.data?.entries],
   )
 
   const filteredTasks = useMemo(() => {
@@ -195,6 +244,46 @@ export function TeammatesPage() {
     })
   }, [data?.memory_proposals, memoryDomainFilter, memoryFilter, memoryStatusFilter, memoryTypeFilter])
 
+  const filteredCatalogEntries = useMemo(() => {
+    const normalizedFilter = catalogFilter.trim().toLowerCase()
+    return (memoryCatalogQuery.data?.entries ?? []).filter((entry) => {
+      if (catalogScopeFilter !== "all" && entry.scope !== catalogScopeFilter) {
+        return false
+      }
+      if (catalogDomainFilter !== "all" && entry.domain !== catalogDomainFilter) {
+        return false
+      }
+      if (catalogTypeFilter !== "all" && entry.entry_type !== catalogTypeFilter) {
+        return false
+      }
+      if (!normalizedFilter) {
+        return true
+      }
+      return [
+        entry.id,
+        entry.title,
+        entry.content,
+        entry.scope,
+        entry.scope_display_name,
+        entry.domain,
+        entry.entry_type,
+        entry.source_teammate_id,
+        entry.source_task_id,
+        entry.reviewed_by,
+        entry.owner_agent_id,
+      ]
+        .join("\n")
+        .toLowerCase()
+        .includes(normalizedFilter)
+    })
+  }, [
+    catalogDomainFilter,
+    catalogFilter,
+    catalogScopeFilter,
+    catalogTypeFilter,
+    memoryCatalogQuery.data?.entries,
+  ])
+
   const effectiveSelectedTaskKey = useMemo(() => {
     if ((data?.tasks ?? []).some((task) => taskKey(task) === selectedTaskKey)) {
       return selectedTaskKey
@@ -223,6 +312,25 @@ export function TeammatesPage() {
       filteredProposals.find((proposal) => proposalKey(proposal) === effectiveSelectedProposalKey) ??
       null,
     [effectiveSelectedProposalKey, filteredProposals],
+  )
+
+  const effectiveSelectedCatalogEntryKey = useMemo(() => {
+    if (
+      filteredCatalogEntries.some((entry) => catalogEntryKey(entry) === selectedCatalogEntryKey)
+    ) {
+      return selectedCatalogEntryKey
+    }
+    return filteredCatalogEntries.length > 0
+      ? catalogEntryKey(filteredCatalogEntries[0])
+      : ""
+  }, [filteredCatalogEntries, selectedCatalogEntryKey])
+
+  const selectedCatalogEntry = useMemo(
+    () =>
+      filteredCatalogEntries.find(
+        (entry) => catalogEntryKey(entry) === effectiveSelectedCatalogEntryKey,
+      ) ?? null,
+    [effectiveSelectedCatalogEntryKey, filteredCatalogEntries],
   )
 
   const taskDetailQuery = useQuery({
@@ -274,6 +382,7 @@ export function TeammatesPage() {
 
   const invalidateRuntime = () => {
     void queryClient.invalidateQueries({ queryKey: ["agent-runtime"] })
+    void queryClient.invalidateQueries({ queryKey: ["agent-runtime", "memory-catalog"] })
     if (taskDetail) {
       void queryClient.invalidateQueries({
         queryKey: ["agent-runtime", "task", taskDetail.owner_agent_id, taskDetail.id],
@@ -544,6 +653,27 @@ export function TeammatesPage() {
       toast.error(
         mutationError?.message ||
           t("pages.agent.teammates.memory_proposal_update_error"),
+      )
+    },
+  })
+
+  const exportMemoryCatalogMutation = useMutation({
+    mutationFn: (format: "markdown" | "json") => downloadAgentRuntimeMemoryCatalog(format),
+    onSuccess: ({ blob, filename }) => {
+      const url = window.URL.createObjectURL(blob)
+      const link = document.createElement("a")
+      link.href = url
+      link.download = filename
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      window.URL.revokeObjectURL(url)
+      toast.success(t("pages.agent.teammates.memory_catalog_export_success", { filename }))
+    },
+    onError: (mutationError: Error) => {
+      toast.error(
+        mutationError?.message ||
+          t("pages.agent.teammates.memory_catalog_export_error"),
       )
     },
   })
@@ -878,6 +1008,30 @@ export function TeammatesPage() {
                   approveMemoryProposalMutation.isPending ||
                   rejectMemoryProposalMutation.isPending
                 }
+              />
+
+              <MemoryCatalogSection
+                t={t}
+                catalog={memoryCatalogQuery.data ?? null}
+                loading={memoryCatalogQuery.isLoading}
+                error={memoryCatalogQuery.error instanceof Error ? memoryCatalogQuery.error : null}
+                entries={filteredCatalogEntries}
+                scopeEntries={catalogScopeEntries}
+                domainEntries={catalogDomainEntries}
+                typeEntries={catalogTypeEntries}
+                filter={catalogFilter}
+                setFilter={setCatalogFilter}
+                scopeFilter={catalogScopeFilter}
+                setScopeFilter={setCatalogScopeFilter}
+                domainFilter={catalogDomainFilter}
+                setDomainFilter={setCatalogDomainFilter}
+                typeFilter={catalogTypeFilter}
+                setTypeFilter={setCatalogTypeFilter}
+                selectedEntryKey={selectedCatalogEntryKey}
+                setSelectedEntryKey={setSelectedCatalogEntryKey}
+                selectedEntry={selectedCatalogEntry}
+                onExport={(format) => exportMemoryCatalogMutation.mutate(format)}
+                busy={exportMemoryCatalogMutation.isPending}
               />
             </>
           )}
@@ -1921,6 +2075,277 @@ function MemoryProposalBadge({ status }: { status: string }) {
   return <Badge variant={variant}>{status}</Badge>
 }
 
+function MemoryCatalogSection(props: {
+  t: (key: string, options?: Record<string, unknown>) => string
+  catalog: AgentRuntimeMemoryCatalog | null
+  loading: boolean
+  error: Error | null
+  entries: AgentRuntimeMemoryCatalogEntry[]
+  scopeEntries: AgentRuntimeMemoryCatalog["scopes"]
+  domainEntries: string[]
+  typeEntries: string[]
+  filter: string
+  setFilter: (value: string) => void
+  scopeFilter: string
+  setScopeFilter: (value: string) => void
+  domainFilter: string
+  setDomainFilter: (value: string) => void
+  typeFilter: string
+  setTypeFilter: (value: string) => void
+  selectedEntryKey: string
+  setSelectedEntryKey: (value: string) => void
+  selectedEntry: AgentRuntimeMemoryCatalogEntry | null
+  onExport: (format: "markdown" | "json") => void
+  busy: boolean
+}) {
+  return (
+    <section className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
+      <Card>
+        <CardHeader>
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div className="space-y-1">
+              <CardTitle>{props.t("pages.agent.teammates.memory_catalog_title")}</CardTitle>
+              <CardDescription>
+                {props.t("pages.agent.teammates.memory_catalog_description")}
+              </CardDescription>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                disabled={props.busy}
+                onClick={() => props.onExport("markdown")}
+              >
+                {props.t("pages.agent.teammates.memory_catalog_actions.export_markdown")}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={props.busy}
+                onClick={() => props.onExport("json")}
+              >
+                {props.t("pages.agent.teammates.memory_catalog_actions.export_json")}
+              </Button>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {props.catalog ? (
+            <div className="grid gap-3 sm:grid-cols-3">
+              <RuntimeField
+                label={props.t("pages.agent.teammates.memory_catalog_stats.entries")}
+                value={String(props.catalog.summary.entry_count)}
+              />
+              <RuntimeField
+                label={props.t("pages.agent.teammates.memory_catalog_stats.scopes")}
+                value={String(props.catalog.summary.scope_count)}
+              />
+              <RuntimeField
+                label={props.t("pages.agent.teammates.memory_catalog_stats.workspaces")}
+                value={String(props.catalog.summary.workspace_count)}
+              />
+            </div>
+          ) : null}
+
+          <div className="grid gap-3 md:grid-cols-4">
+            <Input
+              value={props.filter}
+              onChange={(event) => props.setFilter(event.target.value)}
+              placeholder={props.t("pages.agent.teammates.memory_catalog_filters.search_placeholder")}
+            />
+            <select
+              value={props.scopeFilter}
+              onChange={(event) => props.setScopeFilter(event.target.value)}
+              className="border-input bg-background ring-offset-background flex h-10 w-full rounded-md border px-3 py-2 text-sm"
+            >
+              <option value="all">
+                {props.t("pages.agent.teammates.memory_catalog_filters.scope_all")}
+              </option>
+              {(props.scopeEntries ?? []).map((scope) => (
+                <option key={`${scope.owner_agent_id}:${scope.scope}`} value={scope.scope}>
+                  {scope.display_name} ({scope.entry_count})
+                </option>
+              ))}
+            </select>
+            <select
+              value={props.domainFilter}
+              onChange={(event) => props.setDomainFilter(event.target.value)}
+              className="border-input bg-background ring-offset-background flex h-10 w-full rounded-md border px-3 py-2 text-sm"
+            >
+              <option value="all">
+                {props.t("pages.agent.teammates.memory_catalog_filters.domain_all")}
+              </option>
+              {props.domainEntries.map((domain) => (
+                <option key={domain} value={domain}>
+                  {domain}
+                </option>
+              ))}
+            </select>
+            <select
+              value={props.typeFilter}
+              onChange={(event) => props.setTypeFilter(event.target.value)}
+              className="border-input bg-background ring-offset-background flex h-10 w-full rounded-md border px-3 py-2 text-sm"
+            >
+              <option value="all">
+                {props.t("pages.agent.teammates.memory_catalog_filters.type_all")}
+              </option>
+              {props.typeEntries.map((entryType) => (
+                <option key={entryType} value={entryType}>
+                  {entryType}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {props.error ? (
+            <div className="border-destructive/50 bg-destructive/10 rounded-xl border p-4 text-sm">
+              <div className="text-destructive font-medium">
+                {props.t("pages.agent.teammates.memory_catalog_load_error")}
+              </div>
+              <div className="text-muted-foreground mt-1">{props.error.message}</div>
+            </div>
+          ) : props.loading ? (
+            <div className="space-y-3">
+              {[1, 2, 3].map((row) => (
+                <div key={row} className="rounded-xl border p-4">
+                  <Skeleton className="h-4 w-40" />
+                  <Skeleton className="mt-2 h-4 w-full" />
+                </div>
+              ))}
+            </div>
+          ) : props.entries.length === 0 ? (
+            <p className="text-muted-foreground text-sm">
+              {props.t("pages.agent.teammates.memory_catalog_empty")}
+            </p>
+          ) : (
+            <div className="space-y-3">
+              {props.entries.map((entry) => {
+                const isSelected = catalogEntryKey(entry) === props.selectedEntryKey
+                return (
+                  <button
+                    key={catalogEntryKey(entry)}
+                    type="button"
+                    onClick={() => props.setSelectedEntryKey(catalogEntryKey(entry))}
+                    className={cn(
+                      "border-border/60 hover:border-primary/40 hover:bg-muted/60 w-full rounded-xl border p-4 text-left transition-colors",
+                      isSelected && "border-primary/50 bg-primary/5",
+                    )}
+                  >
+                    <div className="flex flex-wrap items-center gap-2">
+                      <div className="font-medium">{entry.title}</div>
+                      <Badge variant="secondary">{entry.scope_display_name}</Badge>
+                      {entry.domain ? <Badge variant="outline">{entry.domain}</Badge> : null}
+                      {entry.entry_type ? (
+                        <Badge variant="outline">{entry.entry_type}</Badge>
+                      ) : null}
+                      {entry.legacy ? (
+                        <Badge variant="destructive">
+                          {props.t("pages.agent.teammates.memory_catalog_fields.legacy")}
+                        </Badge>
+                      ) : null}
+                    </div>
+                    <p className="text-muted-foreground mt-2 line-clamp-3 text-sm whitespace-pre-wrap">
+                      {entry.content}
+                    </p>
+                    <div className="text-muted-foreground mt-3 flex flex-wrap gap-3 text-xs">
+                      <span>{entry.owner_agent_id}</span>
+                      {entry.source_teammate_id ? <span>{entry.source_teammate_id}</span> : null}
+                      <span>{entry.added_at ? formatTimestamp(entry.added_at) : entry.added_at_display}</span>
+                    </div>
+                  </button>
+                )
+              })}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>{props.t("pages.agent.teammates.memory_catalog_detail_title")}</CardTitle>
+          <CardDescription>
+            {props.t("pages.agent.teammates.memory_catalog_detail_description")}
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {!props.selectedEntry ? (
+            <p className="text-muted-foreground text-sm">
+              {props.t("pages.agent.teammates.memory_catalog_detail_empty")}
+            </p>
+          ) : (
+            <div className="space-y-6">
+              <div className="space-y-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="font-mono text-sm">{props.selectedEntry.id}</div>
+                  <Badge variant="secondary">{props.selectedEntry.owner_agent_id}</Badge>
+                  <Badge variant="outline">{props.selectedEntry.scope_display_name}</Badge>
+                </div>
+                <h3 className="text-lg font-semibold">{props.selectedEntry.title}</h3>
+              </div>
+
+              <dl className="grid gap-4 sm:grid-cols-2">
+                <RuntimeField
+                  label={props.t("pages.agent.teammates.memory_catalog_fields.scope")}
+                  value={props.selectedEntry.scope}
+                />
+                <RuntimeField
+                  label={props.t("pages.agent.teammates.memory_catalog_fields.workspace")}
+                  value={props.selectedEntry.workspace}
+                />
+                <RuntimeField
+                  label={props.t("pages.agent.teammates.memory_catalog_fields.domain")}
+                  value={props.selectedEntry.domain}
+                />
+                <RuntimeField
+                  label={props.t("pages.agent.teammates.memory_catalog_fields.entry_type")}
+                  value={props.selectedEntry.entry_type}
+                />
+                <RuntimeField
+                  label={props.t("pages.agent.teammates.memory_catalog_fields.confidence")}
+                  value={props.selectedEntry.confidence}
+                />
+                <RuntimeField
+                  label={props.t("pages.agent.teammates.memory_catalog_fields.added")}
+                  value={
+                    props.selectedEntry.added_at
+                      ? formatTimestamp(props.selectedEntry.added_at)
+                      : props.selectedEntry.added_at_display
+                  }
+                />
+                <RuntimeField
+                  label={props.t("pages.agent.teammates.memory_catalog_fields.source_task")}
+                  value={props.selectedEntry.source_task_id}
+                />
+                <RuntimeField
+                  label={props.t("pages.agent.teammates.memory_catalog_fields.source_teammate")}
+                  value={props.selectedEntry.source_teammate_id}
+                />
+                <RuntimeField
+                  label={props.t("pages.agent.teammates.memory_catalog_fields.reviewed_by")}
+                  value={props.selectedEntry.reviewed_by}
+                />
+                <RuntimeField
+                  label={props.t("pages.agent.teammates.memory_catalog_fields.source_path")}
+                  value={props.selectedEntry.source_path}
+                />
+              </dl>
+
+              <div className="space-y-2">
+                <div className="text-xs uppercase opacity-70">
+                  {props.t("pages.agent.teammates.memory_catalog_fields.content")}
+                </div>
+                <div className="bg-muted/40 rounded-xl border p-4 text-sm whitespace-pre-wrap">
+                  {props.selectedEntry.content}
+                </div>
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </section>
+  )
+}
+
 function RuntimeLoadingState() {
   return (
     <div className="space-y-6">
@@ -1999,6 +2424,12 @@ function proposalKey(
   proposal: Pick<AgentRuntimeMemoryProposal, "owner_agent_id" | "id">,
 ) {
   return `${proposal.owner_agent_id}:${proposal.id}`
+}
+
+function catalogEntryKey(
+  entry: Pick<AgentRuntimeMemoryCatalogEntry, "owner_agent_id" | "id">,
+) {
+  return `${entry.owner_agent_id}:${entry.id}`
 }
 
 function formatTimestamp(value?: number) {

@@ -416,6 +416,15 @@
         "memory_detail_title": "记忆提案详情",
         "memory_detail_description": "在写入长期记忆之前先检查提议内容。",
         "memory_detail_empty": "请选择一个记忆提案以查看详情。",
+        "memory_catalog_title": "记忆目录",
+        "memory_catalog_description": "浏览已批准写入共享或队友作用域的长期记忆，并导出当前目录用于备份或检查。",
+        "memory_catalog_empty": "当前筛选条件下没有匹配的已批准记忆条目。",
+        "memory_catalog_load_error": "加载记忆目录失败。",
+        "memory_catalog_detail_title": "记忆条目详情",
+        "memory_catalog_detail_description": "查看已写入长期记忆的条目详情。",
+        "memory_catalog_detail_empty": "请选择一个记忆条目以查看详情。",
+        "memory_catalog_export_success": "已将记忆目录导出为 {{filename}}。",
+        "memory_catalog_export_error": "导出记忆目录失败。",
         "memory_proposal_create_success": "已创建记忆提案 {{id}}。",
         "memory_proposal_create_error": "从所选任务创建记忆提案失败。",
         "memory_proposal_approve_success": "已批准记忆提案 {{id}}。",
@@ -472,10 +481,25 @@
           "approve": "批准记忆",
           "reject": "拒绝记忆"
         },
+        "memory_catalog_actions": {
+          "export_markdown": "导出 Markdown",
+          "export_json": "导出 JSON"
+        },
         "memory_filters": {
           "search_placeholder": "按标题、内容、作用域、队友、域或类型过滤",
           "domain_all": "全部域",
           "type_all": "全部类型"
+        },
+        "memory_catalog_filters": {
+          "search_placeholder": "按标题、内容、作用域、域、类型、队友或任务过滤",
+          "scope_all": "全部作用域",
+          "domain_all": "全部域",
+          "type_all": "全部类型"
+        },
+        "memory_catalog_stats": {
+          "entries": "已批准条目",
+          "scopes": "目录作用域",
+          "workspaces": "工作区"
         },
         "review_fields": {
           "actor": "审核人",
@@ -530,6 +554,20 @@
           "reviewed": "审核信息",
           "review_note": "审核备注",
           "content": "内容"
+        },
+        "memory_catalog_fields": {
+          "scope": "作用域",
+          "workspace": "工作区",
+          "domain": "域",
+          "entry_type": "类型",
+          "confidence": "置信度",
+          "added": "添加时间",
+          "source_task": "来源任务",
+          "source_teammate": "来源队友",
+          "reviewed_by": "审核人",
+          "source_path": "来源路径",
+          "content": "内容",
+          "legacy": "旧格式"
         },
         "memory_proposal_update_success": "已更新记忆提案 {{id}}。",
         "memory_proposal_update_error": "更新所选记忆提案失败。"

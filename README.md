@@ -102,7 +102,7 @@ still much lighter than most agent platforms.
 
 🌍 **Truly portable**: Single binary across RISC-V, ARM, MIPS, and x86 architectures. One binary, runs everywhere!
 
-🤝 **AI teammate workflows**: Teammate profiles, tracked delegation, approvals, memory review, and task handoff chains are now first-class runtime concepts.
+🤝 **AI teammate workflows**: Teammate profiles, tracked delegation, approvals, memory review, approved-memory cataloging, and task handoff chains are now first-class runtime concepts.
 
 🤖 **AI-bootstrapped**: Pure Go native implementation — much of the project was generated and refined through agent-driven development plus human review.
 

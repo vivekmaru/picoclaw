@@ -31,6 +31,8 @@ var (
 
 func (h *Handler) registerAgentRuntimeRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/agent/runtime", h.handleAgentRuntime)
+	mux.HandleFunc("GET /api/agent/runtime/memory-catalog", h.handleAgentRuntimeMemoryCatalog)
+	mux.HandleFunc("GET /api/agent/runtime/memory-catalog/export", h.handleExportAgentRuntimeMemoryCatalog)
 	mux.HandleFunc("GET /api/agent/runtime/tasks/{ownerAgentID}/{taskID}", h.handleAgentRuntimeTask)
 	mux.HandleFunc("POST /api/agent/runtime/tasks/{ownerAgentID}/{taskID}/cancel", h.handleCancelAgentRuntimeTask)
 	mux.HandleFunc("POST /api/agent/runtime/tasks/{ownerAgentID}/{taskID}/approve", h.handleApproveAgentRuntimeTask)
@@ -53,6 +55,32 @@ func (h *Handler) handleAgentRuntime(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewEncoder(w).Encode(snapshot); err != nil {
 		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
 	}
+}
+
+func (h *Handler) handleAgentRuntimeMemoryCatalog(w http.ResponseWriter, r *http.Request) {
+	catalog, statusCode, err := h.getGatewayRuntimeMemoryCatalog(gatewayRuntimeRequestTimeout)
+	if err != nil {
+		http.Error(w, err.Error(), statusCode)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(catalog); err != nil {
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+	}
+}
+
+func (h *Handler) handleExportAgentRuntimeMemoryCatalog(w http.ResponseWriter, r *http.Request) {
+	format := r.URL.Query().Get("format")
+	payload, contentType, filename, statusCode, err := h.exportGatewayRuntimeMemoryCatalog(format, gatewayRuntimeRequestTimeout)
+	if err != nil {
+		http.Error(w, err.Error(), statusCode)
+		return
+	}
+
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
+	_, _ = w.Write(payload)
 }
 
 func (h *Handler) handleAgentRuntimeTask(w http.ResponseWriter, r *http.Request) {
@@ -279,6 +307,20 @@ func (h *Handler) getGatewayRuntimeSnapshot(timeout time.Duration) (*agent.Runti
 		return nil, http.StatusBadGateway, err
 	}
 	return &snapshot, http.StatusOK, nil
+}
+
+func (h *Handler) getGatewayRuntimeMemoryCatalog(timeout time.Duration) (*agent.RuntimeMemoryCatalog, int, error) {
+	resp, statusCode, err := h.doGatewayRuntimeRequest(http.MethodGet, "/runtime/agent/memory-catalog", nil, timeout)
+	if err != nil {
+		return nil, statusCode, err
+	}
+	defer resp.Body.Close()
+
+	var catalog agent.RuntimeMemoryCatalog
+	if err := json.NewDecoder(resp.Body).Decode(&catalog); err != nil {
+		return nil, http.StatusBadGateway, err
+	}
+	return &catalog, http.StatusOK, nil
 }
 
 func (h *Handler) getGatewayRuntimeTask(ownerAgentID, taskID string, timeout time.Duration) (*agent.RuntimeTaskInfo, int, error) {
@@ -508,6 +550,37 @@ func (h *Handler) rejectGatewayRuntimeMemoryProposal(ownerAgentID, proposalID, a
 	return &proposal, http.StatusOK, nil
 }
 
+func (h *Handler) exportGatewayRuntimeMemoryCatalog(format string, timeout time.Duration) ([]byte, string, string, int, error) {
+	path := "/runtime/agent/memory-catalog/export"
+	if strings.TrimSpace(format) != "" {
+		path += "?format=" + url.QueryEscape(format)
+	}
+	resp, statusCode, err := h.doGatewayRuntimeRequest(http.MethodGet, path, nil, timeout)
+	if err != nil {
+		return nil, "", "", statusCode, err
+	}
+	defer resp.Body.Close()
+
+	payload, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, "", "", http.StatusBadGateway, err
+	}
+	contentType := strings.TrimSpace(resp.Header.Get("Content-Type"))
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	filename := parseDownloadFilename(resp.Header.Get("Content-Disposition"))
+	if filename == "" {
+		switch strings.ToLower(strings.TrimSpace(format)) {
+		case "json":
+			filename = "memory-catalog.json"
+		default:
+			filename = "memory-catalog.md"
+		}
+	}
+	return payload, contentType, filename, http.StatusOK, nil
+}
+
 func (h *Handler) doGatewayRuntimeRequest(
 	method, path string,
 	body io.Reader,
@@ -555,4 +628,20 @@ func (h *Handler) doGatewayRuntimeRequest(
 		return nil, resp.StatusCode, fmt.Errorf("%s", msg)
 	}
 	return resp, http.StatusOK, nil
+}
+
+func parseDownloadFilename(contentDisposition string) string {
+	contentDisposition = strings.TrimSpace(contentDisposition)
+	if contentDisposition == "" {
+		return ""
+	}
+	for _, part := range strings.Split(contentDisposition, ";") {
+		part = strings.TrimSpace(part)
+		if !strings.HasPrefix(strings.ToLower(part), "filename=") {
+			continue
+		}
+		filename := strings.TrimSpace(strings.TrimPrefix(part, "filename="))
+		return strings.Trim(filename, `"`)
+	}
+	return ""
 }
