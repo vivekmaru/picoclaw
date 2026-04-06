@@ -46,6 +46,8 @@ to a modest SBC, mini PC, or VM.
 
 - [Spawn Tasks](spawn-tasks.md): asynchronous delegation, approvals, and task
   handoff chains.
+- [Usage Guide](usage-guide.md): launcher memory review plus approved-memory
+  catalog browsing/export workflows.
 - [Cron](cron.md): scheduled tasks and command jobs.
 - [Steering](steering.md): inject messages into a running agent loop.
 - [SubTurn](subturn.md): concurrency and nested agent execution.

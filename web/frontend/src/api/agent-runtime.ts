@@ -65,6 +65,50 @@ export interface AgentRuntimeMemoryProposal {
   rejectable?: boolean
 }
 
+export interface AgentRuntimeMemoryCatalogScope {
+  owner_agent_id: string
+  workspace: string
+  scope: string
+  display_name: string
+  long_term_path: string
+  entry_count: number
+  has_long_term: boolean
+}
+
+export interface AgentRuntimeMemoryCatalogEntry {
+  id: string
+  owner_agent_id: string
+  workspace: string
+  scope: string
+  scope_display_name: string
+  source_path: string
+  title: string
+  content: string
+  domain?: string
+  entry_type?: string
+  confidence?: string
+  added_at?: number
+  added_at_display?: string
+  source_task_id?: string
+  source_teammate_id?: string
+  reviewed_by?: string
+  legacy?: boolean
+}
+
+export interface AgentRuntimeMemoryCatalog {
+  generated_at: number
+  summary: {
+    scope_count: number
+    entry_count: number
+    workspace_count: number
+    domain_counts?: Record<string, number>
+    entry_type_counts?: Record<string, number>
+    workspace_entries?: Record<string, number>
+  }
+  scopes?: AgentRuntimeMemoryCatalogScope[]
+  entries?: AgentRuntimeMemoryCatalogEntry[]
+}
+
 export interface AgentRuntimeSnapshot {
   generated_at: number
   summary: {
@@ -103,6 +147,36 @@ export async function getAgentRuntime(): Promise<AgentRuntimeSnapshot> {
     throw new Error(message)
   }
   return res.json() as Promise<AgentRuntimeSnapshot>
+}
+
+export async function getAgentRuntimeMemoryCatalog(): Promise<AgentRuntimeMemoryCatalog> {
+  const res = await launcherFetch("/api/agent/runtime/memory-catalog")
+  if (!res.ok) {
+    const message = (await res.text()) || `API error: ${res.status}`
+    throw new Error(message)
+  }
+  return res.json() as Promise<AgentRuntimeMemoryCatalog>
+}
+
+export async function downloadAgentRuntimeMemoryCatalog(format: "markdown" | "json"): Promise<{
+  blob: Blob
+  filename: string
+}> {
+  const res = await launcherFetch(
+    `/api/agent/runtime/memory-catalog/export?format=${encodeURIComponent(format)}`,
+  )
+  if (!res.ok) {
+    const message = (await res.text()) || `API error: ${res.status}`
+    throw new Error(message)
+  }
+  const disposition = res.headers.get("Content-Disposition")
+  const filename =
+    disposition?.match(/filename="?([^"]+)"?/)?.[1] ??
+    (format === "json" ? "memory-catalog.json" : "memory-catalog.md")
+  return {
+    blob: await res.blob(),
+    filename,
+  }
 }
 
 export async function getAgentRuntimeTask(

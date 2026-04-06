@@ -416,6 +416,15 @@
         "memory_detail_title": "Memory Proposal Detail",
         "memory_detail_description": "Review proposed memory content before it is written into long-term memory.",
         "memory_detail_empty": "Select a memory proposal to inspect it here.",
+        "memory_catalog_title": "Memory Catalog",
+        "memory_catalog_description": "Browse approved long-term memory across shared and teammate scopes, then export the current catalog for backup or inspection.",
+        "memory_catalog_empty": "No approved memory entries match the current filters.",
+        "memory_catalog_load_error": "Failed to load the memory catalog.",
+        "memory_catalog_detail_title": "Memory Entry Detail",
+        "memory_catalog_detail_description": "Inspect approved memory entries exactly as they were committed to long-term memory.",
+        "memory_catalog_detail_empty": "Select a memory entry to inspect it here.",
+        "memory_catalog_export_success": "Exported memory catalog to {{filename}}.",
+        "memory_catalog_export_error": "Failed to export the memory catalog.",
         "memory_proposal_create_success": "Created memory proposal {{id}}.",
         "memory_proposal_create_error": "Failed to create a memory proposal from the selected task.",
         "memory_proposal_approve_success": "Approved memory proposal {{id}}.",
@@ -472,10 +481,25 @@
           "approve": "Approve Memory",
           "reject": "Reject Memory"
         },
+        "memory_catalog_actions": {
+          "export_markdown": "Export Markdown",
+          "export_json": "Export JSON"
+        },
         "memory_filters": {
           "search_placeholder": "Filter by title, content, scope, teammate, domain, or type",
           "domain_all": "All domains",
           "type_all": "All types"
+        },
+        "memory_catalog_filters": {
+          "search_placeholder": "Filter by title, content, scope, domain, type, teammate, or task",
+          "scope_all": "All scopes",
+          "domain_all": "All domains",
+          "type_all": "All types"
+        },
+        "memory_catalog_stats": {
+          "entries": "Approved Entries",
+          "scopes": "Catalog Scopes",
+          "workspaces": "Workspaces"
         },
         "review_fields": {
           "actor": "Reviewer",
@@ -530,6 +554,20 @@
           "reviewed": "Reviewed",
           "review_note": "Review Note",
           "content": "Content"
+        },
+        "memory_catalog_fields": {
+          "scope": "Scope",
+          "workspace": "Workspace",
+          "domain": "Domain",
+          "entry_type": "Type",
+          "confidence": "Confidence",
+          "added": "Added",
+          "source_task": "Source Task",
+          "source_teammate": "Source Teammate",
+          "reviewed_by": "Reviewed By",
+          "source_path": "Source Path",
+          "content": "Content",
+          "legacy": "Legacy"
         },
         "memory_proposal_update_success": "Updated memory proposal {{id}}.",
         "memory_proposal_update_error": "Failed to update the selected memory proposal."

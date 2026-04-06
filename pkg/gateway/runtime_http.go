@@ -12,6 +12,8 @@ import (
 )
 
 const gatewayRuntimePath = "/runtime/agent"
+const gatewayRuntimeMemoryCatalogPath = "/runtime/agent/memory-catalog"
+const gatewayRuntimeMemoryCatalogExportPath = "/runtime/agent/memory-catalog/export"
 const gatewayRuntimeTasksPrefix = "/runtime/agent/tasks/"
 const gatewayRuntimeMemoryProposalsPrefix = "/runtime/agent/memory-proposals/"
 
@@ -64,6 +66,45 @@ func registerRuntimeHTTPHandlers(agentLoop *agent.AgentLoop, channelManager http
 
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(agentLoop.GetRuntimeSnapshot())
+	})
+
+	channelManager.RegisterHTTPHandlerFunc(gatewayRuntimeMemoryCatalogPath, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writeGatewayRuntimeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		if !authorizedGatewayRuntimeRequest(r, authToken) {
+			writeGatewayRuntimeError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(agentLoop.GetRuntimeMemoryCatalog())
+	})
+
+	channelManager.RegisterHTTPHandlerFunc(gatewayRuntimeMemoryCatalogExportPath, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writeGatewayRuntimeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		if !authorizedGatewayRuntimeRequest(r, authToken) {
+			writeGatewayRuntimeError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+
+		content, contentType, filename, err := agentLoop.ExportRuntimeMemoryCatalog(r.URL.Query().Get("format"))
+		if err != nil {
+			if errors.Is(err, agent.ErrRuntimeMemoryCatalogInvalid) {
+				writeGatewayRuntimeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			writeGatewayRuntimeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+
+		w.Header().Set("Content-Type", contentType)
+		w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
+		_, _ = w.Write(content)
 	})
 
 	channelManager.RegisterHTTPHandlerFunc(gatewayRuntimeTasksPrefix, func(w http.ResponseWriter, r *http.Request) {

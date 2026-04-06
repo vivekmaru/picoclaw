@@ -69,6 +69,105 @@ func TestHandleAgentRuntime_ProxySuccess(t *testing.T) {
 	}
 }
 
+func TestHandleAgentRuntimeMemoryCatalog_ProxySuccess(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	cfg := config.DefaultConfig()
+	if err := config.SaveConfig(configPath, cfg); err != nil {
+		t.Fatalf("SaveConfig() error = %v", err)
+	}
+
+	originalRead := readGatewayPIDDataForRuntime
+	originalDo := gatewayRuntimeDo
+	t.Cleanup(func() {
+		readGatewayPIDDataForRuntime = originalRead
+		gatewayRuntimeDo = originalDo
+	})
+
+	readGatewayPIDDataForRuntime = func() *ppid.PidFileData {
+		return &ppid.PidFileData{PID: 123, Host: "127.0.0.1", Port: 18790, Token: "pid-secret"}
+	}
+	gatewayRuntimeDo = func(req *http.Request, timeout time.Duration) (*http.Response, error) {
+		if req.URL.String() != "http://127.0.0.1:18790/runtime/agent/memory-catalog" {
+			t.Fatalf("URL = %q", req.URL.String())
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body: io.NopCloser(strings.NewReader(`{
+				"generated_at": 1,
+				"summary": {"scope_count": 1, "entry_count": 1, "workspace_count": 1},
+				"scopes": [{"owner_agent_id":"main","workspace":"/tmp/workspace","scope":"shared","display_name":"Shared Memory","long_term_path":"/tmp/workspace/memory/MEMORY.md","entry_count":1,"has_long_term":true}],
+				"entries": [{"id":"main:shared:1","owner_agent_id":"main","scope":"shared","scope_display_name":"Shared Memory","title":"Reviewed Memory Entry","content":"hello"}]
+			}`)),
+			Header: make(http.Header),
+		}, nil
+	}
+
+	h := NewHandler(configPath)
+	mux := http.NewServeMux()
+	h.registerAgentRuntimeRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/agent/runtime/memory-catalog", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"entry_count": 1`) && !strings.Contains(rec.Body.String(), `"entry_count":1`) {
+		t.Fatalf("response missing entry count: %s", rec.Body.String())
+	}
+}
+
+func TestHandleExportAgentRuntimeMemoryCatalog_ProxySuccess(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	cfg := config.DefaultConfig()
+	if err := config.SaveConfig(configPath, cfg); err != nil {
+		t.Fatalf("SaveConfig() error = %v", err)
+	}
+
+	originalRead := readGatewayPIDDataForRuntime
+	originalDo := gatewayRuntimeDo
+	t.Cleanup(func() {
+		readGatewayPIDDataForRuntime = originalRead
+		gatewayRuntimeDo = originalDo
+	})
+
+	readGatewayPIDDataForRuntime = func() *ppid.PidFileData {
+		return &ppid.PidFileData{PID: 123, Host: "127.0.0.1", Port: 18790, Token: "pid-secret"}
+	}
+	gatewayRuntimeDo = func(req *http.Request, timeout time.Duration) (*http.Response, error) {
+		if req.URL.String() != "http://127.0.0.1:18790/runtime/agent/memory-catalog/export?format=json" {
+			t.Fatalf("URL = %q", req.URL.String())
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(`{"generated_at":1}`)),
+			Header: http.Header{
+				"Content-Type":        []string{"application/json"},
+				"Content-Disposition": []string{`attachment; filename="memory-catalog.json"`},
+			},
+		}, nil
+	}
+
+	h := NewHandler(configPath)
+	mux := http.NewServeMux()
+	h.registerAgentRuntimeRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/agent/runtime/memory-catalog/export?format=json", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if got := rec.Header().Get("Content-Disposition"); got != `attachment; filename="memory-catalog.json"` {
+		t.Fatalf("Content-Disposition = %q", got)
+	}
+	if got := strings.TrimSpace(rec.Body.String()); got != `{"generated_at":1}` {
+		t.Fatalf("body = %q", got)
+	}
+}
+
 func TestHandleAgentRuntime_GatewayNotRunning(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "config.json")
 	cfg := config.DefaultConfig()
