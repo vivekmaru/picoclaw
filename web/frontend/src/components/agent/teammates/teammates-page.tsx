@@ -124,11 +124,14 @@ export function TeammatesPage() {
   }, [data?.memory_proposals, memoryStatusFilter])
 
   const effectiveSelectedTaskKey = useMemo(() => {
+    if ((data?.tasks ?? []).some((task) => taskKey(task) === selectedTaskKey)) {
+      return selectedTaskKey
+    }
     if (filteredTasks.some((task) => taskKey(task) === selectedTaskKey)) {
       return selectedTaskKey
     }
     return filteredTasks.length > 0 ? taskKey(filteredTasks[0]) : ""
-  }, [filteredTasks, selectedTaskKey])
+  }, [data?.tasks, filteredTasks, selectedTaskKey])
 
   const effectiveSelectedProposalKey = useMemo(() => {
     if (
@@ -140,8 +143,8 @@ export function TeammatesPage() {
   }, [filteredProposals, selectedProposalKey])
 
   const selectedTask = useMemo(
-    () => filteredTasks.find((task) => taskKey(task) === effectiveSelectedTaskKey) ?? null,
-    [effectiveSelectedTaskKey, filteredTasks],
+    () => (data?.tasks ?? []).find((task) => taskKey(task) === effectiveSelectedTaskKey) ?? null,
+    [data?.tasks, effectiveSelectedTaskKey],
   )
   const selectedProposal = useMemo(
     () =>
@@ -301,7 +304,7 @@ export function TeammatesPage() {
         }
         return next
       })
-      setSelectedTaskKey(taskKey(task))
+      revealTask(taskKey(task))
       invalidateRuntime()
     },
     onError: (mutationError: Error) => {
@@ -482,6 +485,12 @@ export function TeammatesPage() {
         ...patch,
       },
     }))
+  }
+
+  const revealTask = (key: string) => {
+    setTaskStatusFilter("all")
+    setTaskFilter("")
+    setSelectedTaskKey(key)
   }
 
   const updateSelectedProposalEditor = (
@@ -684,7 +693,7 @@ export function TeammatesPage() {
                   setHandoffLabel={(value) => updateSelectedTaskHandoff({ label: value })}
                   setHandoffTask={(value) => updateSelectedTaskHandoff({ task: value })}
                   setHandoffKind={(value) => updateSelectedTaskHandoff({ kind: value })}
-                  onSelectTask={setSelectedTaskKey}
+                  onSelectTask={revealTask}
                   onProposeShared={(task) =>
                     createMemoryProposalMutation.mutate({
                       ownerAgentID: task.owner_agent_id,
