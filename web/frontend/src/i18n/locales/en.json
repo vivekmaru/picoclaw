@@ -425,6 +425,14 @@
         "memory_catalog_detail_empty": "Select a memory entry to inspect it here.",
         "memory_catalog_export_success": "Exported memory catalog to {{filename}}.",
         "memory_catalog_export_error": "Failed to export the memory catalog.",
+        "memory_catalog_pin_success": "Pinned memory entry {{title}}.",
+        "memory_catalog_pin_error": "Failed to pin the selected memory entry.",
+        "memory_catalog_unpin_success": "Unpinned memory entry {{title}}.",
+        "memory_catalog_unpin_error": "Failed to unpin the selected memory entry.",
+        "memory_catalog_archive_success": "Archived memory entry {{title}}.",
+        "memory_catalog_archive_error": "Failed to archive the selected memory entry.",
+        "memory_catalog_restore_success": "Restored memory entry {{title}}.",
+        "memory_catalog_restore_error": "Failed to restore the selected memory entry.",
         "memory_proposal_create_success": "Created memory proposal {{id}}.",
         "memory_proposal_create_error": "Failed to create a memory proposal from the selected task.",
         "memory_proposal_approve_success": "Approved memory proposal {{id}}.",
@@ -482,6 +490,10 @@
           "reject": "Reject Memory"
         },
         "memory_catalog_actions": {
+          "pin": "Pin Entry",
+          "unpin": "Unpin Entry",
+          "archive": "Archive Entry",
+          "restore": "Restore Entry",
           "export_markdown": "Export Markdown",
           "export_json": "Export JSON"
         },
@@ -494,12 +506,17 @@
           "search_placeholder": "Filter by title, content, scope, domain, type, teammate, or task",
           "scope_all": "All scopes",
           "domain_all": "All domains",
-          "type_all": "All types"
+          "type_all": "All types",
+          "archived_active": "Active only",
+          "archived_only": "Archived only",
+          "archived_all": "All lifecycle states"
         },
         "memory_catalog_stats": {
           "entries": "Approved Entries",
           "scopes": "Catalog Scopes",
-          "workspaces": "Workspaces"
+          "workspaces": "Workspaces",
+          "pinned": "Pinned",
+          "archived": "Archived"
         },
         "review_fields": {
           "actor": "Reviewer",
@@ -565,6 +582,10 @@
           "source_task": "Source Task",
           "source_teammate": "Source Teammate",
           "reviewed_by": "Reviewed By",
+          "pinned": "Pinned",
+          "pinned_by": "Pinned By",
+          "archived": "Archived",
+          "archived_by": "Archived By",
           "source_path": "Source Path",
           "content": "Content",
           "legacy": "Legacy"

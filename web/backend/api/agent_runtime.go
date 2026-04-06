@@ -33,6 +33,10 @@ func (h *Handler) registerAgentRuntimeRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/agent/runtime", h.handleAgentRuntime)
 	mux.HandleFunc("GET /api/agent/runtime/memory-catalog", h.handleAgentRuntimeMemoryCatalog)
 	mux.HandleFunc("GET /api/agent/runtime/memory-catalog/export", h.handleExportAgentRuntimeMemoryCatalog)
+	mux.HandleFunc("POST /api/agent/runtime/memory-catalog/entries/{entryID}/pin", h.handlePinAgentRuntimeMemoryCatalogEntry)
+	mux.HandleFunc("POST /api/agent/runtime/memory-catalog/entries/{entryID}/unpin", h.handleUnpinAgentRuntimeMemoryCatalogEntry)
+	mux.HandleFunc("POST /api/agent/runtime/memory-catalog/entries/{entryID}/archive", h.handleArchiveAgentRuntimeMemoryCatalogEntry)
+	mux.HandleFunc("POST /api/agent/runtime/memory-catalog/entries/{entryID}/restore", h.handleRestoreAgentRuntimeMemoryCatalogEntry)
 	mux.HandleFunc("GET /api/agent/runtime/tasks/{ownerAgentID}/{taskID}", h.handleAgentRuntimeTask)
 	mux.HandleFunc("POST /api/agent/runtime/tasks/{ownerAgentID}/{taskID}/cancel", h.handleCancelAgentRuntimeTask)
 	mux.HandleFunc("POST /api/agent/runtime/tasks/{ownerAgentID}/{taskID}/approve", h.handleApproveAgentRuntimeTask)
@@ -81,6 +85,42 @@ func (h *Handler) handleExportAgentRuntimeMemoryCatalog(w http.ResponseWriter, r
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
 	_, _ = w.Write(payload)
+}
+
+func (h *Handler) handlePinAgentRuntimeMemoryCatalogEntry(w http.ResponseWriter, r *http.Request) {
+	h.handleAgentRuntimeMemoryCatalogEntryAction(w, r, "pin")
+}
+
+func (h *Handler) handleUnpinAgentRuntimeMemoryCatalogEntry(w http.ResponseWriter, r *http.Request) {
+	h.handleAgentRuntimeMemoryCatalogEntryAction(w, r, "unpin")
+}
+
+func (h *Handler) handleArchiveAgentRuntimeMemoryCatalogEntry(w http.ResponseWriter, r *http.Request) {
+	h.handleAgentRuntimeMemoryCatalogEntryAction(w, r, "archive")
+}
+
+func (h *Handler) handleRestoreAgentRuntimeMemoryCatalogEntry(w http.ResponseWriter, r *http.Request) {
+	h.handleAgentRuntimeMemoryCatalogEntryAction(w, r, "restore")
+}
+
+func (h *Handler) handleAgentRuntimeMemoryCatalogEntryAction(w http.ResponseWriter, r *http.Request, action string) {
+	entryID := r.PathValue("entryID")
+	var req struct {
+		Actor string `json:"actor"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	entry, statusCode, err := h.updateGatewayRuntimeMemoryCatalogEntry(entryID, action, req.Actor, gatewayRuntimeRequestTimeout)
+	if err != nil {
+		http.Error(w, err.Error(), statusCode)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(entry); err != nil {
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+	}
 }
 
 func (h *Handler) handleAgentRuntimeTask(w http.ResponseWriter, r *http.Request) {
@@ -321,6 +361,33 @@ func (h *Handler) getGatewayRuntimeMemoryCatalog(timeout time.Duration) (*agent.
 		return nil, http.StatusBadGateway, err
 	}
 	return &catalog, http.StatusOK, nil
+}
+
+func (h *Handler) updateGatewayRuntimeMemoryCatalogEntry(entryID, action, actor string, timeout time.Duration) (*agent.RuntimeMemoryEntryInfo, int, error) {
+	var body io.Reader
+	if strings.TrimSpace(actor) != "" {
+		payload, err := json.Marshal(map[string]string{"actor": actor})
+		if err != nil {
+			return nil, http.StatusInternalServerError, err
+		}
+		body = bytes.NewReader(payload)
+	}
+	resp, statusCode, err := h.doGatewayRuntimeRequest(
+		http.MethodPost,
+		"/runtime/agent/memory-catalog/entries/"+url.PathEscape(entryID)+"/"+url.PathEscape(action),
+		body,
+		timeout,
+	)
+	if err != nil {
+		return nil, statusCode, err
+	}
+	defer resp.Body.Close()
+
+	var entry agent.RuntimeMemoryEntryInfo
+	if err := json.NewDecoder(resp.Body).Decode(&entry); err != nil {
+		return nil, http.StatusBadGateway, err
+	}
+	return &entry, http.StatusOK, nil
 }
 
 func (h *Handler) getGatewayRuntimeTask(ownerAgentID, taskID string, timeout time.Duration) (*agent.RuntimeTaskInfo, int, error) {

@@ -8,11 +8,15 @@ import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
 
 import {
+  archiveAgentRuntimeMemoryCatalogEntry,
   approveAgentRuntimeMemoryProposal,
   approveAgentRuntimeTask,
   cancelAgentRuntimeTask,
   createAgentRuntimeMemoryProposal,
   downloadAgentRuntimeMemoryCatalog,
+  pinAgentRuntimeMemoryCatalogEntry,
+  restoreAgentRuntimeMemoryCatalogEntry,
+  unpinAgentRuntimeMemoryCatalogEntry,
   getAgentRuntime,
   getAgentRuntimeMemoryCatalog,
   getAgentRuntimeTask,
@@ -91,6 +95,7 @@ export function TeammatesPage() {
   const [catalogScopeFilter, setCatalogScopeFilter] = useState("all")
   const [catalogDomainFilter, setCatalogDomainFilter] = useState("all")
   const [catalogTypeFilter, setCatalogTypeFilter] = useState("all")
+  const [catalogArchiveFilter, setCatalogArchiveFilter] = useState("active")
   const [selectedTaskKey, setSelectedTaskKey] = useState("")
   const [selectedProposalKey, setSelectedProposalKey] = useState("")
   const [selectedCatalogEntryKey, setSelectedCatalogEntryKey] = useState("")
@@ -247,6 +252,12 @@ export function TeammatesPage() {
   const filteredCatalogEntries = useMemo(() => {
     const normalizedFilter = catalogFilter.trim().toLowerCase()
     return (memoryCatalogQuery.data?.entries ?? []).filter((entry) => {
+      if (catalogArchiveFilter === "active" && entry.archived) {
+        return false
+      }
+      if (catalogArchiveFilter === "archived" && !entry.archived) {
+        return false
+      }
       if (catalogScopeFilter !== "all" && entry.scope !== catalogScopeFilter) {
         return false
       }
@@ -279,6 +290,7 @@ export function TeammatesPage() {
   }, [
     catalogDomainFilter,
     catalogFilter,
+    catalogArchiveFilter,
     catalogScopeFilter,
     catalogTypeFilter,
     memoryCatalogQuery.data?.entries,
@@ -678,6 +690,70 @@ export function TeammatesPage() {
     },
   })
 
+  const pinMemoryCatalogEntryMutation = useMutation({
+    mutationFn: ({ entryID }: { entryID: string }) =>
+      pinAgentRuntimeMemoryCatalogEntry(entryID, "launcher"),
+    onSuccess: (entry) => {
+      toast.success(
+        t("pages.agent.teammates.memory_catalog_pin_success", { title: entry.title }),
+      )
+      invalidateRuntime()
+    },
+    onError: (mutationError: Error) => {
+      toast.error(
+        mutationError?.message || t("pages.agent.teammates.memory_catalog_pin_error"),
+      )
+    },
+  })
+
+  const unpinMemoryCatalogEntryMutation = useMutation({
+    mutationFn: ({ entryID }: { entryID: string }) =>
+      unpinAgentRuntimeMemoryCatalogEntry(entryID, "launcher"),
+    onSuccess: (entry) => {
+      toast.success(
+        t("pages.agent.teammates.memory_catalog_unpin_success", { title: entry.title }),
+      )
+      invalidateRuntime()
+    },
+    onError: (mutationError: Error) => {
+      toast.error(
+        mutationError?.message || t("pages.agent.teammates.memory_catalog_unpin_error"),
+      )
+    },
+  })
+
+  const archiveMemoryCatalogEntryMutation = useMutation({
+    mutationFn: ({ entryID }: { entryID: string }) =>
+      archiveAgentRuntimeMemoryCatalogEntry(entryID, "launcher"),
+    onSuccess: (entry) => {
+      toast.success(
+        t("pages.agent.teammates.memory_catalog_archive_success", { title: entry.title }),
+      )
+      invalidateRuntime()
+    },
+    onError: (mutationError: Error) => {
+      toast.error(
+        mutationError?.message || t("pages.agent.teammates.memory_catalog_archive_error"),
+      )
+    },
+  })
+
+  const restoreMemoryCatalogEntryMutation = useMutation({
+    mutationFn: ({ entryID }: { entryID: string }) =>
+      restoreAgentRuntimeMemoryCatalogEntry(entryID, "launcher"),
+    onSuccess: (entry) => {
+      toast.success(
+        t("pages.agent.teammates.memory_catalog_restore_success", { title: entry.title }),
+      )
+      invalidateRuntime()
+    },
+    onError: (mutationError: Error) => {
+      toast.error(
+        mutationError?.message || t("pages.agent.teammates.memory_catalog_restore_error"),
+      )
+    },
+  })
+
   const updateSelectedTaskReview = (patch: Partial<{ actor: string; note: string }>) => {
     if (!taskDetail) {
       return
@@ -1027,11 +1103,23 @@ export function TeammatesPage() {
                 setDomainFilter={setCatalogDomainFilter}
                 typeFilter={catalogTypeFilter}
                 setTypeFilter={setCatalogTypeFilter}
+                archiveFilter={catalogArchiveFilter}
+                setArchiveFilter={setCatalogArchiveFilter}
                 selectedEntryKey={selectedCatalogEntryKey}
                 setSelectedEntryKey={setSelectedCatalogEntryKey}
                 selectedEntry={selectedCatalogEntry}
+                onPin={(entry) => pinMemoryCatalogEntryMutation.mutate({ entryID: entry.id })}
+                onUnpin={(entry) => unpinMemoryCatalogEntryMutation.mutate({ entryID: entry.id })}
+                onArchive={(entry) => archiveMemoryCatalogEntryMutation.mutate({ entryID: entry.id })}
+                onRestore={(entry) => restoreMemoryCatalogEntryMutation.mutate({ entryID: entry.id })}
                 onExport={(format) => exportMemoryCatalogMutation.mutate(format)}
-                busy={exportMemoryCatalogMutation.isPending}
+                busy={
+                  exportMemoryCatalogMutation.isPending ||
+                  pinMemoryCatalogEntryMutation.isPending ||
+                  unpinMemoryCatalogEntryMutation.isPending ||
+                  archiveMemoryCatalogEntryMutation.isPending ||
+                  restoreMemoryCatalogEntryMutation.isPending
+                }
               />
             </>
           )}
@@ -2092,9 +2180,15 @@ function MemoryCatalogSection(props: {
   setDomainFilter: (value: string) => void
   typeFilter: string
   setTypeFilter: (value: string) => void
+  archiveFilter: string
+  setArchiveFilter: (value: string) => void
   selectedEntryKey: string
   setSelectedEntryKey: (value: string) => void
   selectedEntry: AgentRuntimeMemoryCatalogEntry | null
+  onPin: (entry: AgentRuntimeMemoryCatalogEntry) => void
+  onUnpin: (entry: AgentRuntimeMemoryCatalogEntry) => void
+  onArchive: (entry: AgentRuntimeMemoryCatalogEntry) => void
+  onRestore: (entry: AgentRuntimeMemoryCatalogEntry) => void
   onExport: (format: "markdown" | "json") => void
   busy: boolean
 }) {
@@ -2131,7 +2225,7 @@ function MemoryCatalogSection(props: {
         </CardHeader>
         <CardContent className="space-y-4">
           {props.catalog ? (
-            <div className="grid gap-3 sm:grid-cols-3">
+            <div className="grid gap-3 sm:grid-cols-5">
               <RuntimeField
                 label={props.t("pages.agent.teammates.memory_catalog_stats.entries")}
                 value={String(props.catalog.summary.entry_count)}
@@ -2144,10 +2238,18 @@ function MemoryCatalogSection(props: {
                 label={props.t("pages.agent.teammates.memory_catalog_stats.workspaces")}
                 value={String(props.catalog.summary.workspace_count)}
               />
+              <RuntimeField
+                label={props.t("pages.agent.teammates.memory_catalog_stats.pinned")}
+                value={String(props.catalog.summary.pinned_count)}
+              />
+              <RuntimeField
+                label={props.t("pages.agent.teammates.memory_catalog_stats.archived")}
+                value={String(props.catalog.summary.archived_count)}
+              />
             </div>
           ) : null}
 
-          <div className="grid gap-3 md:grid-cols-4">
+          <div className="grid gap-3 md:grid-cols-5">
             <Input
               value={props.filter}
               onChange={(event) => props.setFilter(event.target.value)}
@@ -2195,6 +2297,21 @@ function MemoryCatalogSection(props: {
                 </option>
               ))}
             </select>
+            <select
+              value={props.archiveFilter}
+              onChange={(event) => props.setArchiveFilter(event.target.value)}
+              className="border-input bg-background ring-offset-background flex h-10 w-full rounded-md border px-3 py-2 text-sm"
+            >
+              <option value="active">
+                {props.t("pages.agent.teammates.memory_catalog_filters.archived_active")}
+              </option>
+              <option value="archived">
+                {props.t("pages.agent.teammates.memory_catalog_filters.archived_only")}
+              </option>
+              <option value="all">
+                {props.t("pages.agent.teammates.memory_catalog_filters.archived_all")}
+              </option>
+            </select>
           </div>
 
           {props.error ? (
@@ -2234,6 +2351,14 @@ function MemoryCatalogSection(props: {
                     <div className="flex flex-wrap items-center gap-2">
                       <div className="font-medium">{entry.title}</div>
                       <Badge variant="secondary">{entry.scope_display_name}</Badge>
+                      {entry.pinned ? (
+                        <Badge>{props.t("pages.agent.teammates.memory_catalog_fields.pinned")}</Badge>
+                      ) : null}
+                      {entry.archived ? (
+                        <Badge variant="outline">
+                          {props.t("pages.agent.teammates.memory_catalog_fields.archived")}
+                        </Badge>
+                      ) : null}
                       {entry.domain ? <Badge variant="outline">{entry.domain}</Badge> : null}
                       {entry.entry_type ? (
                         <Badge variant="outline">{entry.entry_type}</Badge>
@@ -2279,8 +2404,57 @@ function MemoryCatalogSection(props: {
                   <div className="font-mono text-sm">{props.selectedEntry.id}</div>
                   <Badge variant="secondary">{props.selectedEntry.owner_agent_id}</Badge>
                   <Badge variant="outline">{props.selectedEntry.scope_display_name}</Badge>
+                  {props.selectedEntry.pinned ? (
+                    <Badge>{props.t("pages.agent.teammates.memory_catalog_fields.pinned")}</Badge>
+                  ) : null}
+                  {props.selectedEntry.archived ? (
+                    <Badge variant="outline">
+                      {props.t("pages.agent.teammates.memory_catalog_fields.archived")}
+                    </Badge>
+                  ) : null}
                 </div>
                 <h3 className="text-lg font-semibold">{props.selectedEntry.title}</h3>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                {props.selectedEntry.pinned ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={props.busy}
+                    onClick={() => props.onUnpin(props.selectedEntry!)}
+                  >
+                    {props.t("pages.agent.teammates.memory_catalog_actions.unpin")}
+                  </Button>
+                ) : (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={props.busy}
+                    onClick={() => props.onPin(props.selectedEntry!)}
+                  >
+                    {props.t("pages.agent.teammates.memory_catalog_actions.pin")}
+                  </Button>
+                )}
+                {props.selectedEntry.archived ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={props.busy}
+                    onClick={() => props.onRestore(props.selectedEntry!)}
+                  >
+                    {props.t("pages.agent.teammates.memory_catalog_actions.restore")}
+                  </Button>
+                ) : (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={props.busy}
+                    onClick={() => props.onArchive(props.selectedEntry!)}
+                  >
+                    {props.t("pages.agent.teammates.memory_catalog_actions.archive")}
+                  </Button>
+                )}
               </div>
 
               <dl className="grid gap-4 sm:grid-cols-2">
@@ -2323,6 +2497,14 @@ function MemoryCatalogSection(props: {
                 <RuntimeField
                   label={props.t("pages.agent.teammates.memory_catalog_fields.reviewed_by")}
                   value={props.selectedEntry.reviewed_by}
+                />
+                <RuntimeField
+                  label={props.t("pages.agent.teammates.memory_catalog_fields.pinned_by")}
+                  value={formatReviewed(props.selectedEntry.pinned_by, props.selectedEntry.pinned_at)}
+                />
+                <RuntimeField
+                  label={props.t("pages.agent.teammates.memory_catalog_fields.archived_by")}
+                  value={formatReviewed(props.selectedEntry.archived_by, props.selectedEntry.archived_at)}
                 />
                 <RuntimeField
                   label={props.t("pages.agent.teammates.memory_catalog_fields.source_path")}

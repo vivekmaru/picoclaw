@@ -168,6 +168,65 @@ func TestHandleExportAgentRuntimeMemoryCatalog_ProxySuccess(t *testing.T) {
 	}
 }
 
+func TestHandlePinAgentRuntimeMemoryCatalogEntry_ProxySuccess(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	cfg := config.DefaultConfig()
+	if err := config.SaveConfig(configPath, cfg); err != nil {
+		t.Fatalf("SaveConfig() error = %v", err)
+	}
+
+	originalRead := readGatewayPIDDataForRuntime
+	originalDo := gatewayRuntimeDo
+	t.Cleanup(func() {
+		readGatewayPIDDataForRuntime = originalRead
+		gatewayRuntimeDo = originalDo
+	})
+
+	readGatewayPIDDataForRuntime = func() *ppid.PidFileData {
+		return &ppid.PidFileData{PID: 123, Host: "127.0.0.1", Port: 18790, Token: "pid-secret"}
+	}
+	gatewayRuntimeDo = func(req *http.Request, timeout time.Duration) (*http.Response, error) {
+		if req.Method != http.MethodPost {
+			t.Fatalf("Method = %s, want POST", req.Method)
+		}
+		if req.URL.String() != "http://127.0.0.1:18790/runtime/agent/memory-catalog/entries/memory-123/pin" {
+			t.Fatalf("URL = %q", req.URL.String())
+		}
+		body, _ := io.ReadAll(req.Body)
+		if !strings.Contains(string(body), `"actor":"launcher"`) {
+			t.Fatalf("request body = %s", string(body))
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body: io.NopCloser(strings.NewReader(`{
+				"id":"memory-123",
+				"owner_agent_id":"main",
+				"scope":"shared",
+				"scope_display_name":"Shared Memory",
+				"title":"Pinned entry",
+				"content":"body",
+				"pinned":true
+			}`)),
+			Header: make(http.Header),
+		}, nil
+	}
+
+	h := NewHandler(configPath)
+	mux := http.NewServeMux()
+	h.registerAgentRuntimeRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/agent/runtime/memory-catalog/entries/memory-123/pin", strings.NewReader(`{"actor":"launcher"}`))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"pinned":true`) {
+		t.Fatalf("response missing pinned state: %s", rec.Body.String())
+	}
+}
+
 func TestHandleAgentRuntime_GatewayNotRunning(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "config.json")
 	cfg := config.DefaultConfig()

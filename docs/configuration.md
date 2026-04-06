@@ -293,6 +293,7 @@ delegation via `teammate_id`.
 - completed tasks can hand work off to another teammate, creating parent/child task lineage for review chains such as `coder -> reviewer`.
 - memory proposals in the launcher review queue can now be classified with `domain`, `entry_type`, and optional `confidence`.
 - approved memory entries are now reindexed into a launcher-visible memory catalog that can be filtered by scope, domain, and type, then exported as Markdown or JSON.
+- approved memory catalog entries can now be pinned or archived without rewriting the underlying `MEMORY.md`; lifecycle state is stored separately under `workspace/state/memory/catalog_state.json`.
 | `match.team_id` | No | Team/workspace-level match |
 
 #### Matching priority

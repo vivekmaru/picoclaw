@@ -92,6 +92,12 @@ export interface AgentRuntimeMemoryCatalogEntry {
   source_task_id?: string
   source_teammate_id?: string
   reviewed_by?: string
+  pinned?: boolean
+  pinned_at?: number
+  pinned_by?: string
+  archived?: boolean
+  archived_at?: number
+  archived_by?: string
   legacy?: boolean
 }
 
@@ -101,6 +107,8 @@ export interface AgentRuntimeMemoryCatalog {
     scope_count: number
     entry_count: number
     workspace_count: number
+    pinned_count: number
+    archived_count: number
     domain_counts?: Record<string, number>
     entry_type_counts?: Record<string, number>
     workspace_entries?: Record<string, number>
@@ -177,6 +185,54 @@ export async function downloadAgentRuntimeMemoryCatalog(format: "markdown" | "js
     blob: await res.blob(),
     filename,
   }
+}
+
+async function postMemoryCatalogEntryAction(
+  entryID: string,
+  action: "pin" | "unpin" | "archive" | "restore",
+  actor: string,
+): Promise<AgentRuntimeMemoryCatalogEntry> {
+  const res = await launcherFetch(
+    `/api/agent/runtime/memory-catalog/entries/${encodeURIComponent(entryID)}/${action}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ actor }),
+    },
+  )
+  if (!res.ok) {
+    const message = (await res.text()) || `API error: ${res.status}`
+    throw new Error(message)
+  }
+  return res.json() as Promise<AgentRuntimeMemoryCatalogEntry>
+}
+
+export function pinAgentRuntimeMemoryCatalogEntry(
+  entryID: string,
+  actor: string,
+): Promise<AgentRuntimeMemoryCatalogEntry> {
+  return postMemoryCatalogEntryAction(entryID, "pin", actor)
+}
+
+export function unpinAgentRuntimeMemoryCatalogEntry(
+  entryID: string,
+  actor: string,
+): Promise<AgentRuntimeMemoryCatalogEntry> {
+  return postMemoryCatalogEntryAction(entryID, "unpin", actor)
+}
+
+export function archiveAgentRuntimeMemoryCatalogEntry(
+  entryID: string,
+  actor: string,
+): Promise<AgentRuntimeMemoryCatalogEntry> {
+  return postMemoryCatalogEntryAction(entryID, "archive", actor)
+}
+
+export function restoreAgentRuntimeMemoryCatalogEntry(
+  entryID: string,
+  actor: string,
+): Promise<AgentRuntimeMemoryCatalogEntry> {
+  return postMemoryCatalogEntryAction(entryID, "restore", actor)
 }
 
 export async function getAgentRuntimeTask(

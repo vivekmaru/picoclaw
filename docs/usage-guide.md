@@ -61,8 +61,8 @@ Use `picoclaw gateway` when you want:
 - use the `Teammates` page to review delegated tasks, approve risky work, and
   hand off completed tasks to another teammate for follow-up or review
 - use the same launcher page to browse approved memory across shared and
-  teammate scopes, then export the catalog when you want a backup or an audit
-  snapshot
+  teammate scopes, then pin important entries, archive stale ones, or export
+  the catalog when you want a backup or an audit snapshot
 - add skills or MCP servers after the base flow works
 
 ### Remote Or Headless Gateway

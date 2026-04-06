@@ -101,6 +101,82 @@ func TestAgentLoop_GetRuntimeMemoryCatalog(t *testing.T) {
 	}
 }
 
+func TestAgentLoop_MemoryCatalogLifecycleActions(t *testing.T) {
+	workspace := t.TempDir()
+	store := NewMemoryProposalStore(workspace)
+	proposal, err := store.Create(MemoryProposalRequest{
+		Scope:     "shared",
+		Domain:    "shared_team",
+		Target:    "long_term",
+		Kind:      "task_result",
+		EntryType: "fact",
+		Title:     "Lifecycle entry",
+		Content:   "This entry should be pinnable and archivable.",
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if _, err := store.Approve(proposal.ID, "launcher", ""); err != nil {
+		t.Fatalf("Approve() error = %v", err)
+	}
+
+	loop := &AgentLoop{registry: &AgentRegistry{
+		agents: map[string]*AgentInstance{
+			"main": {ID: "main", Workspace: workspace},
+		},
+	}}
+	initial := loop.GetRuntimeMemoryCatalog()
+	if len(initial.Entries) != 1 {
+		t.Fatalf("len(initial.Entries) = %d, want 1", len(initial.Entries))
+	}
+	entryID := initial.Entries[0].ID
+	if entryID == "" {
+		t.Fatal("expected stable entry ID")
+	}
+
+	pinned, err := loop.PinRuntimeMemoryCatalogEntry(entryID, "operator")
+	if err != nil {
+		t.Fatalf("PinRuntimeMemoryCatalogEntry() error = %v", err)
+	}
+	if !pinned.Pinned || pinned.PinnedBy != "operator" {
+		t.Fatalf("pinned lifecycle = %#v", pinned)
+	}
+
+	archived, err := loop.ArchiveRuntimeMemoryCatalogEntry(entryID, "operator")
+	if err != nil {
+		t.Fatalf("ArchiveRuntimeMemoryCatalogEntry() error = %v", err)
+	}
+	if !archived.Archived || archived.ArchivedBy != "operator" {
+		t.Fatalf("archived lifecycle = %#v", archived)
+	}
+
+	catalog := loop.GetRuntimeMemoryCatalog()
+	if catalog.Summary.PinnedCount != 1 {
+		t.Fatalf("PinnedCount = %d, want 1", catalog.Summary.PinnedCount)
+	}
+	if catalog.Summary.ArchivedCount != 1 {
+		t.Fatalf("ArchivedCount = %d, want 1", catalog.Summary.ArchivedCount)
+	}
+	if len(catalog.Entries) != 1 || catalog.Entries[0].ID != entryID {
+		t.Fatalf("catalog entry IDs changed unexpectedly: %#v", catalog.Entries)
+	}
+
+	restored, err := loop.RestoreRuntimeMemoryCatalogEntry(entryID, "launcher")
+	if err != nil {
+		t.Fatalf("RestoreRuntimeMemoryCatalogEntry() error = %v", err)
+	}
+	if restored.Archived {
+		t.Fatalf("expected restored entry to clear archived flag: %#v", restored)
+	}
+	unpinned, err := loop.UnpinRuntimeMemoryCatalogEntry(entryID, "launcher")
+	if err != nil {
+		t.Fatalf("UnpinRuntimeMemoryCatalogEntry() error = %v", err)
+	}
+	if unpinned.Pinned {
+		t.Fatalf("expected unpinned entry to clear pinned flag: %#v", unpinned)
+	}
+}
+
 func TestAgentLoop_GetRuntimeMemoryCatalog_LegacyMemoryFallback(t *testing.T) {
 	workspace := t.TempDir()
 	mem := NewMemoryStoreForScope(workspace, "shared")
