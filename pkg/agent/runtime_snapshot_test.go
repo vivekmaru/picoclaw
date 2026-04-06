@@ -450,8 +450,11 @@ func TestUpdateRuntimeMemoryProposal_PreservesValidationErrors(t *testing.T) {
 	}
 
 	_, err = loop.UpdateRuntimeMemoryProposal("main", proposal.ID, "operator", MemoryProposalUpdate{
-		Scope:   "shared",
-		Content: "   ",
+		Scope:      "shared",
+		Domain:     "shared_team",
+		EntryType:  "fact",
+		Content:    "   ",
+		Confidence: "low",
 	})
 	if !errors.Is(err, ErrRuntimeMemoryProposalInvalid) {
 		t.Fatalf("UpdateRuntimeMemoryProposal() error = %v, want ErrRuntimeMemoryProposalInvalid", err)

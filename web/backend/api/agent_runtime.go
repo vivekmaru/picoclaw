@@ -231,10 +231,13 @@ func (h *Handler) handleUpdateAgentRuntimeMemoryProposal(w http.ResponseWriter, 
 	ownerAgentID := r.PathValue("ownerAgentID")
 	proposalID := r.PathValue("proposalID")
 	var req struct {
-		Actor   string `json:"actor"`
-		Scope   string `json:"scope"`
-		Title   string `json:"title"`
-		Content string `json:"content"`
+		Actor      string `json:"actor"`
+		Scope      string `json:"scope"`
+		Domain     string `json:"domain"`
+		EntryType  string `json:"entry_type"`
+		Title      string `json:"title"`
+		Content    string `json:"content"`
+		Confidence string `json:"confidence"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
@@ -246,8 +249,11 @@ func (h *Handler) handleUpdateAgentRuntimeMemoryProposal(w http.ResponseWriter, 
 		proposalID,
 		req.Actor,
 		req.Scope,
+		req.Domain,
+		req.EntryType,
 		req.Title,
 		req.Content,
+		req.Confidence,
 		gatewayRuntimeRequestTimeout,
 	)
 	if err != nil {
@@ -417,12 +423,15 @@ func (h *Handler) createGatewayRuntimeMemoryProposal(ownerAgentID, taskID, scope
 	return &proposal, http.StatusOK, nil
 }
 
-func (h *Handler) updateGatewayRuntimeMemoryProposal(ownerAgentID, proposalID, actor, scope, title, content string, timeout time.Duration) (*agent.RuntimeMemoryProposalInfo, int, error) {
+func (h *Handler) updateGatewayRuntimeMemoryProposal(ownerAgentID, proposalID, actor, scope, domain, entryType, title, content, confidence string, timeout time.Duration) (*agent.RuntimeMemoryProposalInfo, int, error) {
 	payload, err := json.Marshal(map[string]string{
-		"actor":   actor,
-		"scope":   scope,
-		"title":   title,
-		"content": content,
+		"actor":      actor,
+		"scope":      scope,
+		"domain":     domain,
+		"entry_type": entryType,
+		"title":      title,
+		"content":    content,
+		"confidence": confidence,
 	})
 	if err != nil {
 		return nil, http.StatusInternalServerError, err

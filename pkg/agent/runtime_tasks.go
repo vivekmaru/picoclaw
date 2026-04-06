@@ -223,8 +223,10 @@ func (al *AgentLoop) CreateRuntimeMemoryProposalFromTask(ownerAgentID, taskID, s
 	}
 	proposal, err := store.Create(MemoryProposalRequest{
 		Scope:               scope,
+		Domain:              defaultMemoryProposalDomainForScope(scope),
 		Target:              "long_term",
 		Kind:                "task_result",
+		EntryType:           "fact",
 		Title:               title,
 		Content:             content,
 		SourceTaskID:        task.ID,
@@ -365,4 +367,15 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func defaultMemoryProposalDomainForScope(scope string) string {
+	switch {
+	case strings.TrimSpace(scope) == "shared":
+		return "shared_team"
+	case strings.HasPrefix(strings.TrimSpace(scope), "teammate:"):
+		return "teammate_local"
+	default:
+		return "project"
+	}
 }

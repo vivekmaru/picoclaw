@@ -38,6 +38,22 @@ import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/lib/utils"
 
 const RUNTIME_POLL_MS = 3000
+const MEMORY_DOMAINS = [
+  "personal",
+  "project",
+  "server",
+  "shared_team",
+  "teammate_local",
+] as const
+const MEMORY_ENTRY_TYPES = [
+  "fact",
+  "preference",
+  "runbook",
+  "decision",
+  "incident",
+  "todo",
+] as const
+const MEMORY_CONFIDENCE_LEVELS = ["low", "medium", "high"] as const
 type RuntimeTeammate = AgentRuntimeSnapshot["teammates"][number]
 type TaskHandoffForm = {
   actor: string
@@ -47,6 +63,16 @@ type TaskHandoffForm = {
   task: string
   kind: string
 }
+type MemoryProposalEditor = {
+  actor: string
+  note: string
+  scope: string
+  domain: string
+  entryType: string
+  title: string
+  content: string
+  confidence: string
+}
 
 export function TeammatesPage() {
   const { t } = useTranslation()
@@ -54,6 +80,9 @@ export function TeammatesPage() {
   const [taskFilter, setTaskFilter] = useState("")
   const [taskStatusFilter, setTaskStatusFilter] = useState("all")
   const [memoryStatusFilter, setMemoryStatusFilter] = useState("all")
+  const [memoryFilter, setMemoryFilter] = useState("")
+  const [memoryDomainFilter, setMemoryDomainFilter] = useState("all")
+  const [memoryTypeFilter, setMemoryTypeFilter] = useState("all")
   const [selectedTaskKey, setSelectedTaskKey] = useState("")
   const [selectedProposalKey, setSelectedProposalKey] = useState("")
   const [taskReviewForms, setTaskReviewForms] = useState<
@@ -62,12 +91,9 @@ export function TeammatesPage() {
   const [taskHandoffForms, setTaskHandoffForms] = useState<Record<string, TaskHandoffForm>>(
     {},
   )
-  const [proposalEditors, setProposalEditors] = useState<
-    Record<
-      string,
-      { actor: string; note: string; scope: string; title: string; content: string }
-    >
-  >({})
+  const [proposalEditors, setProposalEditors] = useState<Record<string, MemoryProposalEditor>>(
+    {},
+  )
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["agent-runtime"],
@@ -89,6 +115,30 @@ export function TeammatesPage() {
         a[0].localeCompare(b[0]),
       ),
     [data?.summary.memory_proposal_statuses],
+  )
+
+  const memoryDomainEntries = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          (data?.memory_proposals ?? [])
+            .map((proposal) => proposal.domain)
+            .filter((value): value is string => Boolean(value)),
+        ),
+      ).sort((a, b) => a.localeCompare(b)),
+    [data?.memory_proposals],
+  )
+
+  const memoryTypeEntries = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          (data?.memory_proposals ?? [])
+            .map((proposal) => proposal.entry_type)
+            .filter((value): value is string => Boolean(value)),
+        ),
+      ).sort((a, b) => a.localeCompare(b)),
+    [data?.memory_proposals],
   )
 
   const filteredTasks = useMemo(() => {
@@ -115,13 +165,35 @@ export function TeammatesPage() {
   }, [data?.tasks, taskFilter, taskStatusFilter])
 
   const filteredProposals = useMemo(() => {
+    const normalizedFilter = memoryFilter.trim().toLowerCase()
     return (data?.memory_proposals ?? []).filter((proposal) => {
       if (memoryStatusFilter !== "all" && proposal.status !== memoryStatusFilter) {
         return false
       }
-      return true
+      if (memoryDomainFilter !== "all" && proposal.domain !== memoryDomainFilter) {
+        return false
+      }
+      if (memoryTypeFilter !== "all" && proposal.entry_type !== memoryTypeFilter) {
+        return false
+      }
+      if (!normalizedFilter) {
+        return true
+      }
+      return [
+        proposal.id,
+        proposal.scope,
+        proposal.domain,
+        proposal.entry_type,
+        proposal.title,
+        proposal.content,
+        proposal.source_teammate_id,
+        proposal.owner_agent_id,
+      ]
+        .join("\n")
+        .toLowerCase()
+        .includes(normalizedFilter)
     })
-  }, [data?.memory_proposals, memoryStatusFilter])
+  }, [data?.memory_proposals, memoryDomainFilter, memoryFilter, memoryStatusFilter, memoryTypeFilter])
 
   const effectiveSelectedTaskKey = useMemo(() => {
     if ((data?.tasks ?? []).some((task) => taskKey(task) === selectedTaskKey)) {
@@ -183,15 +255,21 @@ export function TeammatesPage() {
         actor: "launcher",
         note: "",
         scope: selectedProposal.scope,
+        domain: selectedProposal.domain ?? defaultMemoryProposalDomain(selectedProposal.scope),
+        entryType: selectedProposal.entry_type ?? "fact",
         title: selectedProposal.title ?? "",
         content: selectedProposal.content,
+        confidence: selectedProposal.confidence ?? "",
       }
     : {
         actor: "launcher",
         note: "",
         scope: "shared",
+        domain: "shared_team",
+        entryType: "fact",
         title: "",
         content: "",
+        confidence: "",
       }
 
   const invalidateRuntime = () => {
@@ -410,21 +488,30 @@ export function TeammatesPage() {
       proposalID,
       actor,
       scope,
+      domain,
+      entryType,
       title,
       content,
+      confidence,
     }: {
       ownerAgentID: string
       proposalID: string
       actor: string
       scope: string
+      domain: string
+      entryType: string
       title: string
       content: string
+      confidence: string
     }) =>
       updateAgentRuntimeMemoryProposal(ownerAgentID, proposalID, {
         actor,
         scope,
+        domain,
+        entry_type: entryType,
         title,
         content,
+        confidence,
       }),
     onSuccess: (proposal) => {
       toast.success(
@@ -443,8 +530,11 @@ export function TeammatesPage() {
             actor: existing.actor,
             note: existing.note,
             scope: proposal.scope,
+            domain: proposal.domain ?? defaultMemoryProposalDomain(proposal.scope),
+            entryType: proposal.entry_type ?? "fact",
             title: proposal.title ?? "",
             content: proposal.content,
+            confidence: proposal.confidence ?? "",
           },
         }
       })
@@ -498,8 +588,11 @@ export function TeammatesPage() {
       actor: string
       note: string
       scope: string
+      domain: string
+      entryType: string
       title: string
       content: string
+      confidence: string
     }>,
   ) => {
     if (!selectedProposal) {
@@ -512,8 +605,11 @@ export function TeammatesPage() {
         actor: selectedProposalEditor.actor,
         note: selectedProposalEditor.note,
         scope: selectedProposalEditor.scope,
+        domain: selectedProposalEditor.domain,
+        entryType: selectedProposalEditor.entryType,
         title: selectedProposalEditor.title,
         content: selectedProposalEditor.content,
+        confidence: selectedProposalEditor.confidence,
         ...patch,
       },
     }))
@@ -722,8 +818,16 @@ export function TeammatesPage() {
                 t={t}
                 proposals={filteredProposals}
                 memoryStatusEntries={memoryStatusEntries}
+                memoryDomainEntries={memoryDomainEntries}
+                memoryTypeEntries={memoryTypeEntries}
+                memoryFilter={memoryFilter}
+                setMemoryFilter={setMemoryFilter}
                 memoryStatusFilter={memoryStatusFilter}
                 setMemoryStatusFilter={setMemoryStatusFilter}
+                memoryDomainFilter={memoryDomainFilter}
+                setMemoryDomainFilter={setMemoryDomainFilter}
+                memoryTypeFilter={memoryTypeFilter}
+                setMemoryTypeFilter={setMemoryTypeFilter}
                 selectedProposalKey={selectedProposalKey}
                 setSelectedProposalKey={setSelectedProposalKey}
                 selectedProposal={selectedProposal}
@@ -749,16 +853,26 @@ export function TeammatesPage() {
                     proposalID: proposal.id,
                     actor: selectedProposalEditor.actor,
                     scope: selectedProposalEditor.scope,
+                    domain: selectedProposalEditor.domain,
+                    entryType: selectedProposalEditor.entryType,
                     title: selectedProposalEditor.title,
                     content: selectedProposalEditor.content,
+                    confidence: selectedProposalEditor.confidence,
                   })
                 }
                 editor={selectedProposalEditor}
                 setEditorActor={(value) => updateSelectedProposalEditor({ actor: value })}
                 setEditorNote={(value) => updateSelectedProposalEditor({ note: value })}
                 setEditorScope={(value) => updateSelectedProposalEditor({ scope: value })}
+                setEditorDomain={(value) => updateSelectedProposalEditor({ domain: value })}
+                setEditorEntryType={(value) =>
+                  updateSelectedProposalEditor({ entryType: value })
+                }
                 setEditorTitle={(value) => updateSelectedProposalEditor({ title: value })}
                 setEditorContent={(value) => updateSelectedProposalEditor({ content: value })}
+                setEditorConfidence={(value) =>
+                  updateSelectedProposalEditor({ confidence: value })
+                }
                 busy={
                   updateMemoryProposalMutation.isPending ||
                   approveMemoryProposalMutation.isPending ||
@@ -1305,17 +1419,28 @@ function MemoryReviewSection(props: {
   t: (key: string, options?: Record<string, unknown>) => string
   proposals: AgentRuntimeMemoryProposal[]
   memoryStatusEntries: Array<[string, number]>
+  memoryDomainEntries: string[]
+  memoryTypeEntries: string[]
+  memoryFilter: string
+  setMemoryFilter: (value: string) => void
   memoryStatusFilter: string
   setMemoryStatusFilter: (value: string) => void
+  memoryDomainFilter: string
+  setMemoryDomainFilter: (value: string) => void
+  memoryTypeFilter: string
+  setMemoryTypeFilter: (value: string) => void
   selectedProposalKey: string
   setSelectedProposalKey: (value: string) => void
   selectedProposal: AgentRuntimeMemoryProposal | null
-  editor: { actor: string; note: string; scope: string; title: string; content: string }
+  editor: MemoryProposalEditor
   setEditorActor: (value: string) => void
   setEditorNote: (value: string) => void
   setEditorScope: (value: string) => void
+  setEditorDomain: (value: string) => void
+  setEditorEntryType: (value: string) => void
   setEditorTitle: (value: string) => void
   setEditorContent: (value: string) => void
+  setEditorConfidence: (value: string) => void
   onUpdate: (proposal: AgentRuntimeMemoryProposal) => void
   onApprove: (proposal: AgentRuntimeMemoryProposal) => void
   onReject: (proposal: AgentRuntimeMemoryProposal) => void
@@ -1350,6 +1475,42 @@ function MemoryReviewSection(props: {
           </div>
         ) : null}
 
+        <div className="grid gap-3 md:grid-cols-3">
+          <Input
+            value={props.memoryFilter}
+            onChange={(event) => props.setMemoryFilter(event.target.value)}
+            placeholder={props.t("pages.agent.teammates.memory_filters.search_placeholder")}
+          />
+          <select
+            value={props.memoryDomainFilter}
+            onChange={(event) => props.setMemoryDomainFilter(event.target.value)}
+            className="border-input bg-background ring-offset-background flex h-10 w-full rounded-md border px-3 py-2 text-sm"
+          >
+            <option value="all">
+              {props.t("pages.agent.teammates.memory_filters.domain_all")}
+            </option>
+            {props.memoryDomainEntries.map((domain) => (
+              <option key={domain} value={domain}>
+                {domain}
+              </option>
+            ))}
+          </select>
+          <select
+            value={props.memoryTypeFilter}
+            onChange={(event) => props.setMemoryTypeFilter(event.target.value)}
+            className="border-input bg-background ring-offset-background flex h-10 w-full rounded-md border px-3 py-2 text-sm"
+          >
+            <option value="all">
+              {props.t("pages.agent.teammates.memory_filters.type_all")}
+            </option>
+            {props.memoryTypeEntries.map((entryType) => (
+              <option key={entryType} value={entryType}>
+                {entryType}
+              </option>
+            ))}
+          </select>
+        </div>
+
         {props.proposals.length === 0 ? (
           <p className="text-muted-foreground text-sm">
             {props.t("pages.agent.teammates.memory_review_empty")}
@@ -1373,6 +1534,12 @@ function MemoryReviewSection(props: {
                       <div className="font-mono text-sm">{proposal.id}</div>
                       <MemoryProposalBadge status={proposal.status} />
                       <Badge variant="secondary">{proposal.owner_agent_id}</Badge>
+                      {proposal.entry_type ? (
+                        <Badge variant="outline">{proposal.entry_type}</Badge>
+                      ) : null}
+                      {proposal.domain ? (
+                        <Badge variant="outline">{proposal.domain}</Badge>
+                      ) : null}
                     </div>
                     {proposal.title ? (
                       <p className="mt-2 text-sm font-medium">{proposal.title}</p>
@@ -1427,6 +1594,59 @@ function MemoryReviewSection(props: {
                               onChange={(event) => props.setEditorScope(event.target.value)}
                               placeholder="shared"
                             />
+                          </div>
+                          <div className="space-y-2">
+                            <div className="text-xs uppercase opacity-70">
+                              {props.t("pages.agent.teammates.memory_fields.domain")}
+                            </div>
+                            <select
+                              value={props.editor.domain}
+                              onChange={(event) => props.setEditorDomain(event.target.value)}
+                              className="border-input bg-background ring-offset-background flex h-10 w-full rounded-md border px-3 py-2 text-sm"
+                            >
+                              {MEMORY_DOMAINS.map((domain) => (
+                                <option key={domain} value={domain}>
+                                  {domain}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <div className="space-y-2">
+                            <div className="text-xs uppercase opacity-70">
+                              {props.t("pages.agent.teammates.memory_fields.entry_type")}
+                            </div>
+                            <select
+                              value={props.editor.entryType}
+                              onChange={(event) =>
+                                props.setEditorEntryType(event.target.value)
+                              }
+                              className="border-input bg-background ring-offset-background flex h-10 w-full rounded-md border px-3 py-2 text-sm"
+                            >
+                              {MEMORY_ENTRY_TYPES.map((entryType) => (
+                                <option key={entryType} value={entryType}>
+                                  {entryType}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <div className="space-y-2">
+                            <div className="text-xs uppercase opacity-70">
+                              {props.t("pages.agent.teammates.memory_fields.confidence")}
+                            </div>
+                            <select
+                              value={props.editor.confidence}
+                              onChange={(event) =>
+                                props.setEditorConfidence(event.target.value)
+                              }
+                              className="border-input bg-background ring-offset-background flex h-10 w-full rounded-md border px-3 py-2 text-sm"
+                            >
+                              <option value="">—</option>
+                              {MEMORY_CONFIDENCE_LEVELS.map((confidence) => (
+                                <option key={confidence} value={confidence}>
+                                  {confidence}
+                                </option>
+                              ))}
+                            </select>
                           </div>
                           <div className="space-y-2">
                             <div className="text-xs uppercase opacity-70">
@@ -1542,6 +1762,14 @@ function MemoryReviewSection(props: {
                         value={props.selectedProposal.scope}
                       />
                       <RuntimeField
+                        label={props.t("pages.agent.teammates.memory_fields.domain")}
+                        value={props.selectedProposal.domain}
+                      />
+                      <RuntimeField
+                        label={props.t("pages.agent.teammates.memory_fields.entry_type")}
+                        value={props.selectedProposal.entry_type}
+                      />
+                      <RuntimeField
                         label={props.t("pages.agent.teammates.memory_fields.target")}
                         value={props.selectedProposal.target}
                       />
@@ -1560,6 +1788,10 @@ function MemoryReviewSection(props: {
                       <RuntimeField
                         label={props.t("pages.agent.teammates.memory_fields.source_teammate")}
                         value={props.selectedProposal.source_teammate_id}
+                      />
+                      <RuntimeField
+                        label={props.t("pages.agent.teammates.memory_fields.confidence")}
+                        value={props.selectedProposal.confidence}
                       />
                       <RuntimeField
                         label={props.t("pages.agent.teammates.memory_fields.created")}
@@ -1803,13 +2035,26 @@ function canPromoteTaskToMemory(task: AgentRuntimeTask) {
 
 function isProposalEditorDirty(
   proposal: AgentRuntimeMemoryProposal,
-  editor: { scope: string; title: string; content: string },
+  editor: MemoryProposalEditor,
 ) {
   return (
     editor.scope.trim() !== proposal.scope ||
+    editor.domain.trim() !== (proposal.domain ?? defaultMemoryProposalDomain(proposal.scope)) ||
+    editor.entryType.trim() !== (proposal.entry_type ?? "fact") ||
     editor.title.trim() !== (proposal.title ?? "") ||
-    editor.content.trim() !== proposal.content.trim()
+    editor.content.trim() !== proposal.content.trim() ||
+    editor.confidence.trim() !== (proposal.confidence ?? "")
   )
+}
+
+function defaultMemoryProposalDomain(scope: string) {
+  if (scope.trim() === "shared") {
+    return "shared_team"
+  }
+  if (scope.trim().startsWith("teammate:")) {
+    return "teammate_local"
+  }
+  return "project"
 }
 
 function buildDefaultHandoffTaskText(task: AgentRuntimeTask, kind: string) {

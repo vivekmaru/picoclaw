@@ -72,6 +72,16 @@ At prompt-build time, PicoClaw merges shared memory with the active teammate's
 local memory namespace so delegated work can keep separate working context
 without losing the shared project memory.
 
+Pending and reviewed memory writes also persist under `workspace/state/memory/`.
+Memory proposals can now carry richer review metadata such as:
+
+- domain (`project`, `server`, `shared_team`, `teammate_local`, ...)
+- entry type (`fact`, `decision`, `runbook`, `incident`, ...)
+- optional confidence level
+
+That metadata is visible in the launcher review queue and is written into the
+approved memory entry so long-term memory remains inspectable outside the UI.
+
 Delegation state now also persists under `workspace/state/subagents/<agent-id>/`.
 Tracked tasks can form explicit parent/child handoff chains, so the launcher
 can show:

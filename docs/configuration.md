@@ -85,6 +85,18 @@ Shared memory remains the default compatibility path. When a teammate profile ha
 `memory_scope`, PicoClaw now injects both shared memory and that teammate-local
 memory into the system prompt for delegated work.
 
+Reviewed memory proposals now persist separately under `workspace/state/memory/proposals.json`.
+Each proposal can carry:
+
+- `scope`
+- `domain`
+- `entry_type`
+- optional `confidence`
+
+This gives the launcher a cleaner review surface for keeping facts, runbooks,
+decisions, and incidents distinct instead of treating every memory write as a
+flat note.
+
 ### Web launcher dashboard
 
 **picoclaw-launcher** serves a browser UI that requires sign-in first. By default, the **dashboard token** and **session signing key** are **generated in memory on each start** (a new random token after every restart). Set **`PICOCLAW_LAUNCHER_TOKEN`** to pin a fixed token for that process (startup logs do not print the secret when this env var is used).
@@ -279,6 +291,7 @@ delegation via `teammate_id`.
 - `spawn_status` keeps the human-readable report and now also appends a structured task payload for machine inspection.
 - tracked spawn tasks can now enter review, memory-promotion, and handoff flows in the launcher runtime page.
 - completed tasks can hand work off to another teammate, creating parent/child task lineage for review chains such as `coder -> reviewer`.
+- memory proposals in the launcher review queue can now be classified with `domain`, `entry_type`, and optional `confidence`.
 | `match.team_id` | No | Team/workspace-level match |
 
 #### Matching priority
