@@ -4,6 +4,16 @@ PicoClaw runs on virtually any Linux device. This page tracks verified chips, pr
 
 **Your hardware not listed?** Submit a PR to add it! Hardware vendors are welcome to contribute and co-promote.
 
+> **Important deployment note**
+>
+> PicoClaw now has two practical deployment profiles:
+>
+> - **Core runtime**: gateway/agent focused, still aligned with low-footprint SBC
+>   and edge-device deployments
+> - **Full launcher and teammate cockpit**: better suited to a modest SBC, mini
+>   PC, or VM because it includes the private web UI, review surfaces, task
+>   tracking, and memory workflows
+
 ---
 
 ## 1. Verified Chip Support
@@ -114,6 +124,8 @@ Any ARM64 Android phone (2015+) with 1GB+ RAM. Install [Termux](https://github.c
 
 ## 5. Minimum Requirements
 
+### Core Runtime
+
 | Resource | Minimum | Recommended |
 |----------|---------|-------------|
 | RAM | 10MB free | 32MB+ free |
@@ -121,6 +133,19 @@ Any ARM64 Android phone (2015+) with 1GB+ RAM. Install [Termux](https://github.c
 | CPU | Any (single core 0.6GHz+) | — |
 | OS | Linux (kernel 3.x+) | Linux 5.x+ |
 | Network | Required (for LLM API calls) | Ethernet or WiFi |
+
+### Full Launcher And Teammate Cockpit
+
+| Resource | Minimum | Recommended |
+|----------|---------|-------------|
+| RAM | 256MB+ | 512MB+ |
+| Storage | 150MB+ | 500MB+ with workspace and logs |
+| CPU | ARM64/x86_64 class SBC or VM | Quad-core SBC, mini PC, or VM |
+| OS | Linux, macOS, or Windows | Linux 5.x+ |
+
+The core gateway can still fit the original low-footprint story. The full
+product experience is no longer best described as a `$10 hardware` setup unless
+you intentionally stay close to the headless/runtime-only deployment model.
 
 ---
 
