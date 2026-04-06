@@ -94,16 +94,16 @@ func (s *runtimeMemoryCatalogStateStore) setPinned(id string, pinned bool, actor
 	if s.loadErr != nil {
 		return fmt.Errorf("load memory catalog state: %w", s.loadErr)
 	}
-	entry := s.ensureEntryLocked(id)
-	entry.Pinned = pinned
-	if pinned {
-		entry.PinnedAt = time.Now().UnixMilli()
-		entry.PinnedBy = defaultReviewActor(actor)
-	} else {
-		entry.PinnedAt = 0
-		entry.PinnedBy = ""
-	}
-	return s.persistLocked()
+	return s.updateEntryLocked(id, func(entry *runtimeMemoryCatalogEntryState) {
+		entry.Pinned = pinned
+		if pinned {
+			entry.PinnedAt = time.Now().UnixMilli()
+			entry.PinnedBy = defaultReviewActor(actor)
+		} else {
+			entry.PinnedAt = 0
+			entry.PinnedBy = ""
+		}
+	})
 }
 
 func (s *runtimeMemoryCatalogStateStore) setArchived(id string, archived bool, actor string) error {
@@ -112,16 +112,16 @@ func (s *runtimeMemoryCatalogStateStore) setArchived(id string, archived bool, a
 	if s.loadErr != nil {
 		return fmt.Errorf("load memory catalog state: %w", s.loadErr)
 	}
-	entry := s.ensureEntryLocked(id)
-	entry.Archived = archived
-	if archived {
-		entry.ArchivedAt = time.Now().UnixMilli()
-		entry.ArchivedBy = defaultReviewActor(actor)
-	} else {
-		entry.ArchivedAt = 0
-		entry.ArchivedBy = ""
-	}
-	return s.persistLocked()
+	return s.updateEntryLocked(id, func(entry *runtimeMemoryCatalogEntryState) {
+		entry.Archived = archived
+		if archived {
+			entry.ArchivedAt = time.Now().UnixMilli()
+			entry.ArchivedBy = defaultReviewActor(actor)
+		} else {
+			entry.ArchivedAt = 0
+			entry.ArchivedBy = ""
+		}
+	})
 }
 
 func (s *runtimeMemoryCatalogStateStore) ensureEntryLocked(id string) *runtimeMemoryCatalogEntryState {
@@ -131,6 +131,25 @@ func (s *runtimeMemoryCatalogStateStore) ensureEntryLocked(id string) *runtimeMe
 	entry := &runtimeMemoryCatalogEntryState{ID: id}
 	s.entries[id] = entry
 	return entry
+}
+
+func (s *runtimeMemoryCatalogStateStore) updateEntryLocked(id string, update func(entry *runtimeMemoryCatalogEntryState)) error {
+	entry, existed := s.entries[id]
+	if !existed {
+		entry = &runtimeMemoryCatalogEntryState{ID: id}
+		s.entries[id] = entry
+	}
+	before := *entry
+	update(entry)
+	if err := s.persistLocked(); err != nil {
+		if existed {
+			*entry = before
+		} else {
+			delete(s.entries, id)
+		}
+		return err
+	}
+	return nil
 }
 
 func (s *runtimeMemoryCatalogStateStore) load() error {

@@ -337,6 +337,48 @@ func TestRuntimeMemoryCatalogStateStoreLoadFailureBlocksMutation(t *testing.T) {
 	}
 }
 
+func TestRuntimeMemoryCatalogStateStorePersistFailureRollsBackMutation(t *testing.T) {
+	workspace := t.TempDir()
+	stateDir := filepath.Join(workspace, "state", "memory", "catalog_state.json")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+
+	store := &runtimeMemoryCatalogStateStore{
+		stateFile: stateDir,
+		entries: map[string]*runtimeMemoryCatalogEntryState{
+			"memory-a": {
+				ID:       "memory-a",
+				Pinned:   true,
+				PinnedAt: 123,
+				PinnedBy: "launcher",
+			},
+		},
+	}
+
+	before, ok := store.getCopy("memory-a")
+	if !ok {
+		t.Fatal("expected seeded entry")
+	}
+	if err := store.setArchived("memory-a", true, "operator"); err == nil {
+		t.Fatal("expected setArchived() to fail when persistLocked() cannot write")
+	}
+	after, ok := store.getCopy("memory-a")
+	if !ok {
+		t.Fatal("expected seeded entry after rollback")
+	}
+	if after != before {
+		t.Fatalf("entry changed after failed persist: before=%#v after=%#v", before, after)
+	}
+
+	if err := store.setPinned("memory-b", true, "operator"); err == nil {
+		t.Fatal("expected setPinned() to fail for new entry when persistLocked() cannot write")
+	}
+	if _, ok := store.getCopy("memory-b"); ok {
+		t.Fatal("unexpected new entry retained after failed persist")
+	}
+}
+
 func TestAgentLoop_MemoryCatalogDuplicateEntriesGetDistinctLifecycleIDs(t *testing.T) {
 	workspace := t.TempDir()
 	mem := NewMemoryStoreForScope(workspace, "shared")
