@@ -115,7 +115,7 @@ func (al *AgentLoop) GetRuntimeMemoryCatalog() RuntimeMemoryCatalog {
 			content := strings.TrimSpace(mem.ReadLongTerm())
 			scopeInfo.HasLongTerm = content != ""
 			if content != "" {
-				stateStore := newRuntimeMemoryCatalogStateStore(ref.Workspace)
+				stateStore := getRuntimeMemoryCatalogStateStore(ref.Workspace)
 				entries := parseRuntimeMemoryCatalogEntries(ref.OwnerAgentID, ref.Workspace, mem, content)
 				for i := range entries {
 					stateStore.apply(&entries[i])
@@ -399,9 +399,9 @@ func parseRuntimeMemoryCatalogEntries(ownerAgentID, workspace string, mem *Memor
 	}
 
 	entries := make([]RuntimeMemoryEntryInfo, 0, len(parsed))
-	for idx, section := range parsed {
+	for _, section := range parsed {
 		entry := RuntimeMemoryEntryInfo{
-			ID:               runtimeMemoryCatalogEntryID(ownerAgentID, workspace, mem.Scope(), mem.LongTermPath(), section, idx),
+			ID:               runtimeMemoryCatalogEntryID(ownerAgentID, workspace, mem.Scope(), mem.LongTermPath(), section),
 			OwnerAgentID:     ownerAgentID,
 			Workspace:        workspace,
 			Scope:            mem.Scope(),
@@ -433,7 +433,6 @@ func parseRuntimeMemoryCatalogEntries(ownerAgentID, workspace string, mem *Memor
 func runtimeMemoryCatalogEntryID(
 	ownerAgentID, workspace, scope, sourcePath string,
 	section runtimeMemoryParsedSection,
-	index int,
 ) string {
 	sum := sha256.Sum256([]byte(strings.Join([]string{
 		ownerAgentID,
@@ -449,7 +448,6 @@ func runtimeMemoryCatalogEntryID(
 		section.SourceTaskID,
 		section.SourceTeammate,
 		section.ReviewedBy,
-		fmt.Sprintf("%d", index),
 	}, "\x00")))
 	return "memory-" + hex.EncodeToString(sum[:12])
 }

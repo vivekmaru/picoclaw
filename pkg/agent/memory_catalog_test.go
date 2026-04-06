@@ -177,6 +177,89 @@ func TestAgentLoop_MemoryCatalogLifecycleActions(t *testing.T) {
 	}
 }
 
+func TestAgentLoop_MemoryCatalogEntryIDsRemainStableWhenEarlierEntriesShift(t *testing.T) {
+	workspace := t.TempDir()
+	mem := NewMemoryStoreForScope(workspace, "shared")
+	baseContent := strings.Join([]string{
+		"## First Entry",
+		"",
+		"- Added: 2026-04-07 10:00:00 UTC",
+		"- Domain: shared_team",
+		"",
+		"First body",
+		"",
+		"## Stable Target",
+		"",
+		"- Added: 2026-04-07 11:00:00 UTC",
+		"- Domain: shared_team",
+		"",
+		"Target body",
+	}, "\n")
+	if err := mem.WriteLongTerm(baseContent); err != nil {
+		t.Fatalf("WriteLongTerm(baseContent) error = %v", err)
+	}
+
+	loop := &AgentLoop{registry: &AgentRegistry{
+		agents: map[string]*AgentInstance{
+			"main": {ID: "main", Workspace: workspace},
+		},
+	}}
+	before := loop.GetRuntimeMemoryCatalog()
+	idsBefore := map[string]string{}
+	for _, entry := range before.Entries {
+		idsBefore[entry.Title] = entry.ID
+	}
+
+	updatedContent := strings.Join([]string{
+		"## Prepended Entry",
+		"",
+		"- Added: 2026-04-07 09:30:00 UTC",
+		"- Domain: shared_team",
+		"",
+		"Prepended body",
+		"",
+		baseContent,
+	}, "\n")
+	if err := mem.WriteLongTerm(updatedContent); err != nil {
+		t.Fatalf("WriteLongTerm(updatedContent) error = %v", err)
+	}
+
+	after := loop.GetRuntimeMemoryCatalog()
+	idsAfter := map[string]string{}
+	for _, entry := range after.Entries {
+		idsAfter[entry.Title] = entry.ID
+	}
+
+	if idsBefore["Stable Target"] == "" || idsAfter["Stable Target"] == "" {
+		t.Fatalf("missing stable target IDs before=%q after=%q", idsBefore["Stable Target"], idsAfter["Stable Target"])
+	}
+	if idsBefore["Stable Target"] != idsAfter["Stable Target"] {
+		t.Fatalf("stable target ID changed: before=%q after=%q", idsBefore["Stable Target"], idsAfter["Stable Target"])
+	}
+}
+
+func TestRuntimeMemoryCatalogStateStoreSharedByWorkspace(t *testing.T) {
+	workspace := t.TempDir()
+	first := getRuntimeMemoryCatalogStateStore(workspace)
+	second := getRuntimeMemoryCatalogStateStore(workspace)
+	if first != second {
+		t.Fatal("expected workspace state store to be shared")
+	}
+
+	if err := first.setPinned("memory-a", true, "operator"); err != nil {
+		t.Fatalf("setPinned() error = %v", err)
+	}
+	if err := second.setArchived("memory-b", true, "operator"); err != nil {
+		t.Fatalf("setArchived() error = %v", err)
+	}
+	if _, ok := first.getCopy("memory-b"); !ok {
+		t.Fatal("expected first store to observe archive written by second store")
+	}
+	if _, ok := second.getCopy("memory-a"); !ok {
+		t.Fatal("expected second store to observe pin written by first store")
+	}
+}
+
 func TestAgentLoop_GetRuntimeMemoryCatalog_LegacyMemoryFallback(t *testing.T) {
 	workspace := t.TempDir()
 	mem := NewMemoryStoreForScope(workspace, "shared")

@@ -23,7 +23,7 @@ func (al *AgentLoop) setRuntimeMemoryCatalogEntryPinned(entryID, actor string, p
 	if err != nil {
 		return RuntimeMemoryEntryInfo{}, err
 	}
-	store := newRuntimeMemoryCatalogStateStore(entry.Workspace)
+	store := getRuntimeMemoryCatalogStateStore(entry.Workspace)
 	if err := store.setPinned(entry.ID, pinned, actor); err != nil {
 		return RuntimeMemoryEntryInfo{}, err
 	}
@@ -35,7 +35,7 @@ func (al *AgentLoop) setRuntimeMemoryCatalogEntryArchived(entryID, actor string,
 	if err != nil {
 		return RuntimeMemoryEntryInfo{}, err
 	}
-	store := newRuntimeMemoryCatalogStateStore(entry.Workspace)
+	store := getRuntimeMemoryCatalogStateStore(entry.Workspace)
 	if err := store.setArchived(entry.ID, archived, actor); err != nil {
 		return RuntimeMemoryEntryInfo{}, err
 	}

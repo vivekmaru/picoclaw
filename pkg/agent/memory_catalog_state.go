@@ -36,13 +36,26 @@ type runtimeMemoryCatalogStateStore struct {
 
 const runtimeMemoryCatalogStateVersion = 1
 
-func newRuntimeMemoryCatalogStateStore(workspace string) *runtimeMemoryCatalogStateStore {
+var runtimeMemoryCatalogStateStores sync.Map
+
+func getRuntimeMemoryCatalogStateStore(workspace string) *runtimeMemoryCatalogStateStore {
+	workspace = filepath.Clean(strings.TrimSpace(workspace))
+	if workspace == "" {
+		return &runtimeMemoryCatalogStateStore{
+			stateFile: filepath.Join("state", "memory", "catalog_state.json"),
+			entries:   make(map[string]*runtimeMemoryCatalogEntryState),
+		}
+	}
+	if existing, ok := runtimeMemoryCatalogStateStores.Load(workspace); ok {
+		return existing.(*runtimeMemoryCatalogStateStore)
+	}
 	store := &runtimeMemoryCatalogStateStore{
 		stateFile: filepath.Join(workspace, "state", "memory", "catalog_state.json"),
 		entries:   make(map[string]*runtimeMemoryCatalogEntryState),
 	}
 	_ = store.load()
-	return store
+	actual, _ := runtimeMemoryCatalogStateStores.LoadOrStore(workspace, store)
+	return actual.(*runtimeMemoryCatalogStateStore)
 }
 
 func (s *runtimeMemoryCatalogStateStore) getCopy(id string) (runtimeMemoryCatalogEntryState, bool) {
