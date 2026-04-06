@@ -58,6 +58,8 @@ Use `picoclaw gateway` when you want:
 - run `picoclaw-launcher`
 - add one model
 - use the built-in Pico chat page
+- use the `Teammates` page to review delegated tasks, approve risky work, and
+  hand off completed tasks to another teammate for follow-up or review
 - add skills or MCP servers after the base flow works
 
 ### Remote Or Headless Gateway

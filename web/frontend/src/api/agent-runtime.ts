@@ -12,6 +12,13 @@ export interface AgentRuntimeTask {
   requester_teammate_id?: string
   origin_channel?: string
   origin_chat_id?: string
+  parent_task_id?: string
+  parent_owner_agent_id?: string
+  root_task_id?: string
+  root_owner_agent_id?: string
+  handoff_kind?: string
+  handoff_actor?: string
+  handoff_note?: string
   approval_policy?: string
   approved_by?: string
   approved_at?: number
@@ -28,6 +35,7 @@ export interface AgentRuntimeTask {
   cancelable?: boolean
   approvable?: boolean
   rejectable?: boolean
+  handoffable?: boolean
 }
 
 export interface AgentRuntimeMemoryProposal {
@@ -158,6 +166,34 @@ export async function rejectAgentRuntimeTask(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ actor, note }),
+    },
+  )
+  if (!res.ok) {
+    const message = (await res.text()) || `API error: ${res.status}`
+    throw new Error(message)
+  }
+  return res.json() as Promise<AgentRuntimeTask>
+}
+
+export async function handoffAgentRuntimeTask(
+  ownerAgentID: string,
+  taskID: string,
+  payload: {
+    actor: string
+    note: string
+    agent_id?: string
+    teammate_id?: string
+    label: string
+    task: string
+    kind?: string
+  },
+): Promise<AgentRuntimeTask> {
+  const res = await launcherFetch(
+    `/api/agent/runtime/tasks/${encodeURIComponent(ownerAgentID)}/${encodeURIComponent(taskID)}/handoff`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
     },
   )
   if (!res.ok) {

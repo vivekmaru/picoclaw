@@ -408,6 +408,8 @@
         "task_approve_error": "Failed to approve the selected task.",
         "task_reject_success": "Rejected task {{id}}.",
         "task_reject_error": "Failed to reject the selected task.",
+        "task_handoff_success": "Created follow-up task {{id}}.",
+        "task_handoff_error": "Failed to create a follow-up task.",
         "memory_review_title": "Memory Review Queue",
         "memory_review_description": "Promote completed task results into shared or teammate memory, then approve or reject them explicitly.",
         "memory_review_empty": "No memory proposals are waiting for review.",
@@ -439,7 +441,28 @@
           "cancel": "Cancel Task",
           "canceling": "Canceling...",
           "approve": "Approve Task",
-          "reject": "Reject Task"
+          "reject": "Reject Task",
+          "handoff": "Create Follow-up Task"
+        },
+        "handoff": {
+          "title": "Handoff Chain",
+          "target": "Target Teammate",
+          "target_placeholder": "Select a teammate",
+          "kind": "Handoff Kind",
+          "label": "New Task Label",
+          "label_placeholder": "Review: original task",
+          "task": "Follow-up Task",
+          "task_placeholder": "Describe the follow-up work for the selected teammate",
+          "actor": "Initiated By",
+          "actor_placeholder": "launcher",
+          "note": "Handoff Note",
+          "note_placeholder": "Why this work is being handed off",
+          "parent_task": "Parent Task",
+          "child_tasks": "Follow-up Tasks",
+          "kinds": {
+            "follow_up": "Follow-up",
+            "review": "Review"
+          }
         },
         "memory_actions": {
           "title": "Promote To Memory Review",
@@ -473,6 +496,10 @@
           "channel": "Origin Channel",
           "chat": "Origin Chat",
           "kind": "Kind",
+          "parent": "Parent Task",
+          "root": "Root Task",
+          "handoff_kind": "Handoff Kind",
+          "handoff_by": "Handoff By",
           "created": "Created",
           "started": "Started",
           "completed": "Completed",

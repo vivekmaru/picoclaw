@@ -249,6 +249,21 @@ func taskStatusSnapshot(task SubagentTask) map[string]any {
 	if task.RequesterTeammateID != "" {
 		snapshot["requester_teammate_id"] = task.RequesterTeammateID
 	}
+	if task.ParentTaskID != "" {
+		snapshot["parent_task_id"] = task.ParentTaskID
+	}
+	if task.ParentOwnerAgentID != "" {
+		snapshot["parent_owner_agent_id"] = task.ParentOwnerAgentID
+	}
+	if task.RootTaskID != "" {
+		snapshot["root_task_id"] = task.RootTaskID
+	}
+	if task.RootOwnerAgentID != "" {
+		snapshot["root_owner_agent_id"] = task.RootOwnerAgentID
+	}
+	if task.HandoffKind != "" {
+		snapshot["handoff_kind"] = task.HandoffKind
+	}
 	if task.MemoryScope != "" {
 		snapshot["memory_scope"] = task.MemoryScope
 	}

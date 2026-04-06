@@ -35,6 +35,7 @@ func (h *Handler) registerAgentRuntimeRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/agent/runtime/tasks/{ownerAgentID}/{taskID}/cancel", h.handleCancelAgentRuntimeTask)
 	mux.HandleFunc("POST /api/agent/runtime/tasks/{ownerAgentID}/{taskID}/approve", h.handleApproveAgentRuntimeTask)
 	mux.HandleFunc("POST /api/agent/runtime/tasks/{ownerAgentID}/{taskID}/reject", h.handleRejectAgentRuntimeTask)
+	mux.HandleFunc("POST /api/agent/runtime/tasks/{ownerAgentID}/{taskID}/handoff", h.handleHandoffAgentRuntimeTask)
 	mux.HandleFunc("POST /api/agent/runtime/tasks/{ownerAgentID}/{taskID}/memory-proposals", h.handleCreateAgentRuntimeMemoryProposal)
 	mux.HandleFunc("POST /api/agent/runtime/memory-proposals/{ownerAgentID}/{proposalID}/update", h.handleUpdateAgentRuntimeMemoryProposal)
 	mux.HandleFunc("POST /api/agent/runtime/memory-proposals/{ownerAgentID}/{proposalID}/approve", h.handleApproveAgentRuntimeMemoryProposal)
@@ -123,6 +124,27 @@ func (h *Handler) handleRejectAgentRuntimeTask(w http.ResponseWriter, r *http.Re
 	}
 
 	task, statusCode, err := h.rejectGatewayRuntimeTask(ownerAgentID, taskID, req.Actor, req.Note, gatewayRuntimeRequestTimeout)
+	if err != nil {
+		http.Error(w, err.Error(), statusCode)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(task); err != nil {
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+	}
+}
+
+func (h *Handler) handleHandoffAgentRuntimeTask(w http.ResponseWriter, r *http.Request) {
+	ownerAgentID := r.PathValue("ownerAgentID")
+	taskID := r.PathValue("taskID")
+	var req agent.RuntimeTaskHandoffRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	task, statusCode, err := h.handoffGatewayRuntimeTask(ownerAgentID, taskID, req, gatewayRuntimeRequestTimeout)
 	if err != nil {
 		http.Error(w, err.Error(), statusCode)
 		return
@@ -331,6 +353,29 @@ func (h *Handler) rejectGatewayRuntimeTask(ownerAgentID, taskID, actor, note str
 		http.MethodPost,
 		"/runtime/agent/tasks/"+url.PathEscape(ownerAgentID)+"/"+url.PathEscape(taskID)+"/reject",
 		body,
+		timeout,
+	)
+	if err != nil {
+		return nil, statusCode, err
+	}
+	defer resp.Body.Close()
+
+	var task agent.RuntimeTaskInfo
+	if err := json.NewDecoder(resp.Body).Decode(&task); err != nil {
+		return nil, http.StatusBadGateway, err
+	}
+	return &task, http.StatusOK, nil
+}
+
+func (h *Handler) handoffGatewayRuntimeTask(ownerAgentID, taskID string, req agent.RuntimeTaskHandoffRequest, timeout time.Duration) (*agent.RuntimeTaskInfo, int, error) {
+	payload, err := json.Marshal(req)
+	if err != nil {
+		return nil, http.StatusInternalServerError, err
+	}
+	resp, statusCode, err := h.doGatewayRuntimeRequest(
+		http.MethodPost,
+		"/runtime/agent/tasks/"+url.PathEscape(ownerAgentID)+"/"+url.PathEscape(taskID)+"/handoff",
+		bytes.NewReader(payload),
 		timeout,
 	)
 	if err != nil {

@@ -265,6 +265,60 @@ func TestSubagentManager_LoadPersistedTasksMigratesLegacyStore(t *testing.T) {
 	}
 }
 
+func TestSubagentManager_SpawnPersistsHandoffLineage(t *testing.T) {
+	workspace := t.TempDir()
+	manager := NewSubagentManager(&MockLLMProvider{}, "test-model", workspace, "main")
+	manager.SetSpawner(func(
+		ctx context.Context,
+		task, label, agentID, teammateID string,
+		tls *ToolRegistry,
+		maxTokens int,
+		temperature float64,
+		hasMaxTokens, hasTemperature bool,
+	) (*ToolResult, error) {
+		return &ToolResult{ForLLM: "review complete"}, nil
+	})
+
+	task, err := manager.Spawn(context.Background(), SpawnRequest{
+		Task:               "Review the source task",
+		Label:              "Review: subagent-1",
+		AgentID:            "main",
+		TeammateID:         "reviewer",
+		ParentTaskID:       "subagent-1",
+		ParentOwnerAgentID: "main",
+		RootTaskID:         "subagent-1",
+		RootOwnerAgentID:   "main",
+		HandoffKind:        "review",
+		HandoffActor:       "launcher",
+		HandoffNote:        "Double check the result",
+	}, nil)
+	if err != nil {
+		t.Fatalf("Spawn() error = %v", err)
+	}
+
+	waitForTaskStatus(t, manager, task.ID, "completed")
+
+	copied, ok := manager.GetTaskCopy(task.ID)
+	if !ok {
+		t.Fatalf("task %s not found", task.ID)
+	}
+	if copied.Kind != "handoff" {
+		t.Fatalf("Kind = %q, want handoff", copied.Kind)
+	}
+	if copied.ParentTaskID != "subagent-1" || copied.ParentOwnerAgentID != "main" {
+		t.Fatalf("parent = %s/%s, want main/subagent-1", copied.ParentOwnerAgentID, copied.ParentTaskID)
+	}
+	if copied.RootTaskID != "subagent-1" || copied.RootOwnerAgentID != "main" {
+		t.Fatalf("root = %s/%s, want main/subagent-1", copied.RootOwnerAgentID, copied.RootTaskID)
+	}
+	if copied.HandoffKind != "review" || copied.HandoffActor != "launcher" {
+		t.Fatalf("handoff metadata = %#v", copied)
+	}
+	if copied.HandoffNote != "Double check the result" {
+		t.Fatalf("HandoffNote = %q", copied.HandoffNote)
+	}
+}
+
 func TestSubagentManager_CancelTaskPersistsState(t *testing.T) {
 	workspace := t.TempDir()
 	manager := NewSubagentManager(&MockLLMProvider{}, "test-model", workspace, "main")

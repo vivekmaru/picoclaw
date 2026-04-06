@@ -61,6 +61,13 @@ type SpawnRequest struct {
 	RequesterTeammateID string
 	OriginChannel       string
 	OriginChatID        string
+	ParentTaskID        string
+	ParentOwnerAgentID  string
+	RootTaskID          string
+	RootOwnerAgentID    string
+	HandoffKind         string
+	HandoffActor        string
+	HandoffNote         string
 }
 
 type SubagentTask struct {
@@ -74,6 +81,13 @@ type SubagentTask struct {
 	RequesterTeammateID string   `json:"requester_teammate_id,omitempty"`
 	OriginChannel       string   `json:"origin_channel,omitempty"`
 	OriginChatID        string   `json:"origin_chat_id,omitempty"`
+	ParentTaskID        string   `json:"parent_task_id,omitempty"`
+	ParentOwnerAgentID  string   `json:"parent_owner_agent_id,omitempty"`
+	RootTaskID          string   `json:"root_task_id,omitempty"`
+	RootOwnerAgentID    string   `json:"root_owner_agent_id,omitempty"`
+	HandoffKind         string   `json:"handoff_kind,omitempty"`
+	HandoffActor        string   `json:"handoff_actor,omitempty"`
+	HandoffNote         string   `json:"handoff_note,omitempty"`
 	ApprovalPolicy      string   `json:"approval_policy,omitempty"`
 	ApprovedBy          string   `json:"approved_by,omitempty"`
 	ApprovedAt          int64    `json:"approved_at,omitempty"`
@@ -231,9 +245,14 @@ func (sm *SubagentManager) Spawn(ctx context.Context, req SpawnRequest, callback
 		}
 	}
 
+	kind := "delegation"
+	if strings.TrimSpace(req.ParentTaskID) != "" {
+		kind = "handoff"
+	}
+
 	subagentTask := &SubagentTask{
 		ID:                  taskID,
-		Kind:                "delegation",
+		Kind:                kind,
 		Task:                req.Task,
 		Label:               req.Label,
 		AgentID:             resolvedAgentID,
@@ -242,11 +261,30 @@ func (sm *SubagentManager) Spawn(ctx context.Context, req SpawnRequest, callback
 		RequesterTeammateID: req.RequesterTeammateID,
 		OriginChannel:       req.OriginChannel,
 		OriginChatID:        req.OriginChatID,
+		ParentTaskID:        strings.TrimSpace(req.ParentTaskID),
+		ParentOwnerAgentID:  strings.TrimSpace(req.ParentOwnerAgentID),
+		RootTaskID:          strings.TrimSpace(req.RootTaskID),
+		RootOwnerAgentID:    strings.TrimSpace(req.RootOwnerAgentID),
+		HandoffKind:         strings.TrimSpace(req.HandoffKind),
+		HandoffActor:        strings.TrimSpace(req.HandoffActor),
+		HandoffNote:         strings.TrimSpace(req.HandoffNote),
 		ApprovalPolicy:      teammate.ApprovalPolicy,
 		Status:              "queued",
 		MemoryScope:         teammate.MemoryScope,
 		WorkspaceScope:      append([]string(nil), teammate.WorkspaceScope...),
 		Created:             time.Now().UnixMilli(),
+	}
+	if subagentTask.ParentTaskID != "" {
+		if subagentTask.RootTaskID == "" {
+			subagentTask.RootTaskID = subagentTask.ParentTaskID
+		}
+		if subagentTask.RootOwnerAgentID == "" {
+			if subagentTask.ParentOwnerAgentID != "" {
+				subagentTask.RootOwnerAgentID = subagentTask.ParentOwnerAgentID
+			} else {
+				subagentTask.RootOwnerAgentID = resolvedAgentID
+			}
+		}
 	}
 	if requiresTaskApproval(teammate.ApprovalPolicy) {
 		subagentTask.Status = "awaiting_approval"

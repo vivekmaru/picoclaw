@@ -247,6 +247,65 @@ func TestHandleApproveAgentRuntimeTask_ProxySuccess(t *testing.T) {
 	}
 }
 
+func TestHandleHandoffAgentRuntimeTask_ProxySuccess(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	cfg := config.DefaultConfig()
+	if err := config.SaveConfig(configPath, cfg); err != nil {
+		t.Fatalf("SaveConfig() error = %v", err)
+	}
+
+	originalRead := readGatewayPIDDataForRuntime
+	originalDo := gatewayRuntimeDo
+	t.Cleanup(func() {
+		readGatewayPIDDataForRuntime = originalRead
+		gatewayRuntimeDo = originalDo
+	})
+
+	readGatewayPIDDataForRuntime = func() *ppid.PidFileData {
+		return &ppid.PidFileData{PID: 123, Host: "127.0.0.1", Port: 18790, Token: "pid-secret"}
+	}
+	gatewayRuntimeDo = func(req *http.Request, timeout time.Duration) (*http.Response, error) {
+		if req.URL.String() != "http://127.0.0.1:18790/runtime/agent/tasks/main/subagent-1/handoff" {
+			t.Fatalf("URL = %q", req.URL.String())
+		}
+		body, _ := io.ReadAll(req.Body)
+		requestBody := string(body)
+		if !strings.Contains(requestBody, `"teammate_id":"reviewer"`) {
+			t.Fatalf("request body missing teammate: %s", requestBody)
+		}
+		if !strings.Contains(requestBody, `"kind":"review"`) {
+			t.Fatalf("request body missing kind: %s", requestBody)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body: io.NopCloser(strings.NewReader(`{
+				"owner_agent_id":"main",
+				"id":"subagent-2",
+				"kind":"handoff",
+				"parent_task_id":"subagent-1",
+				"parent_owner_agent_id":"main",
+				"status":"queued"
+			}`)),
+			Header: make(http.Header),
+		}, nil
+	}
+
+	h := NewHandler(configPath)
+	mux := http.NewServeMux()
+	h.registerAgentRuntimeRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/agent/runtime/tasks/main/subagent-1/handoff", strings.NewReader(`{"actor":"launcher","note":"Need review","teammate_id":"reviewer","label":"Review: subagent-1","task":"Review the result","kind":"review"}`))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"kind":"handoff"`) {
+		t.Fatalf("response missing handoff task kind: %s", rec.Body.String())
+	}
+}
+
 func TestHandleCreateAgentRuntimeMemoryProposal_ProxySuccess(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "config.json")
 	cfg := config.DefaultConfig()
