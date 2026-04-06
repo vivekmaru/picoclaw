@@ -277,6 +277,8 @@ delegation via `teammate_id`.
 - each turn now gets shared memory plus the current teammate's local memory scope when one exists.
 - the `spawn` tool now accepts `teammate_id` in addition to `agent_id`.
 - `spawn_status` keeps the human-readable report and now also appends a structured task payload for machine inspection.
+- tracked spawn tasks can now enter review, memory-promotion, and handoff flows in the launcher runtime page.
+- completed tasks can hand work off to another teammate, creating parent/child task lineage for review chains such as `coder -> reviewer`.
 | `match.team_id` | No | Team/workspace-level match |
 
 #### Matching priority

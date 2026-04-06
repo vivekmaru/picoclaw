@@ -50,6 +50,7 @@ type RuntimeTaskInfo struct {
 	Cancelable   bool   `json:"cancelable,omitempty"`
 	Approvable   bool   `json:"approvable,omitempty"`
 	Rejectable   bool   `json:"rejectable,omitempty"`
+	Handoffable  bool   `json:"handoffable,omitempty"`
 	tools.SubagentTask
 }
 
@@ -204,6 +205,7 @@ func runtimeTaskInfo(ownerAgentID string, task tools.SubagentTask) RuntimeTaskIn
 		Cancelable:   runtimeTaskCancelable(task),
 		Approvable:   runtimeTaskApprovable(task),
 		Rejectable:   runtimeTaskRejectable(task),
+		Handoffable:  runtimeTaskHandoffable(task),
 		SubagentTask: task,
 	}
 }
@@ -223,6 +225,10 @@ func runtimeTaskApprovable(task tools.SubagentTask) bool {
 
 func runtimeTaskRejectable(task tools.SubagentTask) bool {
 	return strings.EqualFold(strings.TrimSpace(task.Status), "awaiting_approval")
+}
+
+func runtimeTaskHandoffable(task tools.SubagentTask) bool {
+	return isSubagentTaskTerminalStatus(task.Status)
 }
 
 func collectRuntimeMemoryProposals(registry *AgentRegistry, agentIDs []string) []RuntimeMemoryProposalInfo {

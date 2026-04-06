@@ -72,6 +72,15 @@ At prompt-build time, PicoClaw merges shared memory with the active teammate's
 local memory namespace so delegated work can keep separate working context
 without losing the shared project memory.
 
+Delegation state now also persists under `workspace/state/subagents/<agent-id>/`.
+Tracked tasks can form explicit parent/child handoff chains, so the launcher
+can show:
+
+- the original task
+- follow-up or review tasks spawned from it
+- who initiated the handoff
+- the handoff note and kind (`follow_up` or `review`)
+
 ### Channels
 
 Channels are ingress and egress adapters for chat systems, sockets, and device
@@ -133,6 +142,8 @@ The runtime can load capabilities from:
    logs, and gateway lifecycle.
 3. Chat traffic uses `/pico/ws`, which the launcher proxies to the gateway's
    Pico channel.
+4. The teammate runtime page polls live task, approval, memory-review, and
+   handoff-chain state from the gateway runtime APIs.
 
 ## Trust Boundaries
 

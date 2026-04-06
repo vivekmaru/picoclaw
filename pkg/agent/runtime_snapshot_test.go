@@ -315,6 +315,112 @@ func TestAgentLoopRuntimeApprovalAndMemoryReview(t *testing.T) {
 	}
 }
 
+func TestAgentLoopHandoffRuntimeTaskCreatesLinkedChildTask(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Agents.Defaults.Workspace = t.TempDir()
+	cfg.Tools.Subagent.Enabled = true
+	cfg.Tools.Spawn.Enabled = true
+	cfg.Tools.SpawnStatus.Enabled = true
+	cfg.Agents.List = []config.AgentConfig{
+		{ID: "main", Default: true, Name: "Main"},
+	}
+	cfg.Teammates.List = []config.TeammateConfig{
+		{ID: "coder", AgentID: "main", Role: "coder", MemoryScope: "teammate:coder"},
+		{ID: "reviewer", AgentID: "main", Role: "reviewer", MemoryScope: "teammate:reviewer"},
+	}
+
+	loop := NewAgentLoop(cfg, bus.NewMessageBus(), &mockProvider{})
+	t.Cleanup(func() {
+		loop.GetRegistry().Close()
+	})
+
+	agentInst := loop.GetRegistry().GetDefaultAgent()
+	rawSpawn, _ := agentInst.Tools.Get("spawn")
+	managerProvider := rawSpawn.(runtimeManagerProvider)
+	manager := managerProvider.Manager()
+	manager.SetSpawner(func(
+		ctx context.Context,
+		task, label, targetAgentID, teammateID string,
+		tls *tools.ToolRegistry,
+		maxTokens int,
+		temperature float64,
+		hasMaxTokens, hasTemperature bool,
+	) (*tools.ToolResult, error) {
+		return &tools.ToolResult{ForLLM: "completed child task"}, nil
+	})
+
+	sourceTask, err := manager.Spawn(context.Background(), tools.SpawnRequest{
+		Task:       "Implement the feature slice",
+		Label:      "feature",
+		TeammateID: "coder",
+	}, nil)
+	if err != nil {
+		t.Fatalf("Spawn() source error = %v", err)
+	}
+	waitForRuntimeTaskTerminalState(t, manager, sourceTask.ID)
+
+	handoffTask, err := loop.HandoffRuntimeTask("main", sourceTask.ID, RuntimeTaskHandoffRequest{
+		Actor:      "launcher",
+		Note:       "Need a second set of eyes",
+		TeammateID: "reviewer",
+		Kind:       "review",
+	})
+	if err != nil {
+		t.Fatalf("HandoffRuntimeTask() error = %v", err)
+	}
+	if handoffTask.Kind != "handoff" {
+		t.Fatalf("handoffTask.Kind = %q, want handoff", handoffTask.Kind)
+	}
+	if handoffTask.ParentTaskID != sourceTask.ID || handoffTask.ParentOwnerAgentID != "main" {
+		t.Fatalf("parent link = %s/%s, want main/%s", handoffTask.ParentOwnerAgentID, handoffTask.ParentTaskID, sourceTask.ID)
+	}
+	if handoffTask.RootTaskID != sourceTask.ID || handoffTask.RootOwnerAgentID != "main" {
+		t.Fatalf("root link = %s/%s, want main/%s", handoffTask.RootOwnerAgentID, handoffTask.RootTaskID, sourceTask.ID)
+	}
+	if handoffTask.HandoffKind != "review" {
+		t.Fatalf("HandoffKind = %q, want review", handoffTask.HandoffKind)
+	}
+	if handoffTask.HandoffActor != "launcher" {
+		t.Fatalf("HandoffActor = %q, want launcher", handoffTask.HandoffActor)
+	}
+	if handoffTask.RequesterTeammateID != "coder" {
+		t.Fatalf("RequesterTeammateID = %q, want coder", handoffTask.RequesterTeammateID)
+	}
+
+	snapshot := loop.GetRuntimeSnapshot()
+	foundChild := false
+	for _, task := range snapshot.Tasks {
+		if task.ID != handoffTask.ID {
+			continue
+		}
+		foundChild = true
+		if !task.Handoffable && task.Status == "completed" {
+			t.Fatalf("completed handoff task should be handoffable for follow-up")
+		}
+	}
+	if !foundChild {
+		t.Fatalf("handoff task %s missing from runtime snapshot", handoffTask.ID)
+	}
+}
+
+func waitForRuntimeTaskTerminalState(t *testing.T, manager *tools.SubagentManager, taskID string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		task, ok := manager.GetTaskCopy(taskID)
+		if !ok {
+			t.Fatalf("task %s disappeared", taskID)
+		}
+		if task.Status == "completed" || task.Status == "failed" || task.Status == "canceled" || task.Status == "denied" {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("task %s did not reach terminal state, status=%s", taskID, task.Status)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 func TestUpdateRuntimeMemoryProposal_PreservesValidationErrors(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Agents.Defaults.Workspace = t.TempDir()

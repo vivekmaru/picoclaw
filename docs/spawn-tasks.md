@@ -1,70 +1,124 @@
-# 🔄 Spawn & Async Tasks
+# Spawn Tasks And Handoffs
 
-> Back to [README](../README.md)
+PicoClaw supports tracked asynchronous delegation through the `spawn` tool.
 
-PicoClaw supports **asynchronous task execution** via the `spawn` tool. This is primarily used by the **Heartbeat** system to run long-running tasks without blocking the main agent loop.
+This is no longer just a fire-and-forget background task mechanism. In the
+current runtime, spawned work can carry:
 
-## Heartbeat
+- requester identity
+- teammate identity
+- approval policy
+- memory scope
+- persisted task state
+- parent/child handoff lineage
 
-The heartbeat system periodically checks `workspace/HEARTBEAT.md` for scheduled tasks. On first run, a default template is auto-generated. You can customize it to define quick tasks (handled inline) and long tasks (delegated via `spawn`).
+## What `spawn` Does
 
-**Example `HEARTBEAT.md`:**
+`spawn` creates a tracked subagent task that runs independently of the current
+turn. The task is persisted under the workspace so it can survive launcher
+refreshes and runtime restarts.
 
-```markdown
-## Quick Tasks (respond directly)
+Current task states include:
 
-- Report current time
+- `queued`
+- `awaiting_approval`
+- `running`
+- `canceling`
+- `completed`
+- `failed`
+- `canceled`
+- `denied`
 
-## Long Tasks (use spawn for async)
+## Teammate-Aware Delegation
 
-- Search the web for AI news and summarize
-- Check email and report important messages
-```
+You can target either:
 
-**Key behaviors:**
+- `agent_id`
+- `teammate_id`
 
-| Feature                 | Description                                               |
-| ----------------------- | --------------------------------------------------------- |
-| **spawn**               | Creates async subagent, doesn't block heartbeat           |
-| **Independent context** | Subagent has its own context, no session history          |
-| **message tool**        | Subagent communicates with user directly via message tool |
-| **Non-blocking**        | After spawning, heartbeat continues to next task          |
+Using `teammate_id` is usually preferable because it lets PicoClaw attach:
 
-#### How Subagent Communication Works
+- role metadata
+- memory scope
+- approval policy
+- workspace scope
 
-```
-Heartbeat triggers
-    ↓
-Agent reads HEARTBEAT.md
-    ↓
-For long task: spawn subagent
-    ↓                           ↓
-Continue to next task      Subagent works independently
-    ↓                           ↓
-All tasks done            Subagent uses "message" tool
-    ↓                           ↓
-Respond HEARTBEAT_OK      User receives result directly
-```
+That makes the task part of the teammate system rather than just a raw
+subprocess-like background job.
 
-The subagent has access to tools (message, web_search, etc.) and can communicate with the user independently without going through the main agent.
+## Runtime Visibility
 
-**Configuration:**
+Tracked spawn tasks are visible from the launcher runtime page.
 
-```json
-{
-  "heartbeat": {
-    "enabled": true,
-    "interval": 30
-  }
-}
-```
+The launcher can now:
 
-| Option     | Default | Description                        |
-| ---------- | ------- | ---------------------------------- |
-| `enabled`  | `true`  | Enable/disable heartbeat           |
-| `interval` | `30`    | Check interval in minutes (min: 5) |
+- inspect task detail
+- cancel queued or running work
+- approve or reject approval-gated work
+- promote task output into memory review
+- create follow-up or review handoff tasks from completed work
 
-**Environment variables:**
+## Approval Flow
 
-* `PICOCLAW_HEARTBEAT_ENABLED=false` to disable
-* `PICOCLAW_HEARTBEAT_INTERVAL=60` to change interval
+If the teammate profile requires approval, a spawned task enters
+`awaiting_approval` instead of running immediately.
+
+That creates a cleaner trust model:
+
+1. teammate proposes work
+2. launcher reviews it
+3. human approves or rejects it
+4. task proceeds or stops
+
+## Memory Review
+
+Completed task output can be promoted into a memory proposal instead of being
+written silently into long-term memory.
+
+That lets you:
+
+- inspect proposed content
+- edit scope, title, and content
+- approve or reject the memory write
+- keep shared and teammate-local memory cleaner
+
+## Task Handoff Chains
+
+Completed tasks can now hand work off to another teammate.
+
+Examples:
+
+- `coder -> reviewer`
+- `researcher -> coder`
+- `operator -> memory_keeper`
+
+Each handoff creates a new tracked task with explicit lineage:
+
+- parent task
+- root task
+- handoff kind
+- handoff actor
+- handoff note
+
+This is the start of a real teammate workflow model rather than a single flat
+task queue.
+
+## Operational Notes
+
+- task state lives under `workspace/state/subagents/<agent-id>/tasks.json`
+- interrupted in-flight tasks are recovered as failed on restart rather than
+  silently resumed
+- the launcher is currently the best surface for reviewing and controlling
+  tracked tasks
+
+## When To Use `spawn`
+
+Use `spawn` when work is:
+
+- long-running
+- independent enough to continue outside the current turn
+- a good candidate for teammate review or handoff
+- worth tracking in the runtime UI
+
+For synchronous delegation inside one turn, `subagent` is still the simpler
+tool.

@@ -408,6 +408,8 @@
         "task_approve_error": "批准所选任务失败。",
         "task_reject_success": "已拒绝任务 {{id}}。",
         "task_reject_error": "拒绝所选任务失败。",
+        "task_handoff_success": "已创建后续任务 {{id}}。",
+        "task_handoff_error": "创建后续任务失败。",
         "memory_review_title": "记忆审核队列",
         "memory_review_description": "将已完成任务的结果提升为共享记忆或队友记忆候选项，并明确批准或拒绝。",
         "memory_review_empty": "当前没有待审核的记忆提案。",
@@ -439,7 +441,28 @@
           "cancel": "取消任务",
           "canceling": "取消中...",
           "approve": "批准任务",
-          "reject": "拒绝任务"
+          "reject": "拒绝任务",
+          "handoff": "创建后续任务"
+        },
+        "handoff": {
+          "title": "任务交接链",
+          "target": "目标队友",
+          "target_placeholder": "选择一个队友",
+          "kind": "交接类型",
+          "label": "新任务标签",
+          "label_placeholder": "Review: 原任务",
+          "task": "后续任务",
+          "task_placeholder": "描述需要交给目标队友处理的后续工作",
+          "actor": "发起人",
+          "actor_placeholder": "launcher",
+          "note": "交接备注",
+          "note_placeholder": "说明为什么要交接这项工作",
+          "parent_task": "父任务",
+          "child_tasks": "后续任务",
+          "kinds": {
+            "follow_up": "后续处理",
+            "review": "审查"
+          }
         },
         "memory_actions": {
           "title": "提交到记忆审核",
@@ -473,6 +496,10 @@
           "channel": "来源频道",
           "chat": "来源会话",
           "kind": "类型",
+          "parent": "父任务",
+          "root": "根任务",
+          "handoff_kind": "交接类型",
+          "handoff_by": "交接发起人",
           "created": "创建时间",
           "started": "开始时间",
           "completed": "完成时间",

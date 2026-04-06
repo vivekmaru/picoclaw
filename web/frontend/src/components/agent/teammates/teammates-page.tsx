@@ -14,10 +14,12 @@ import {
   createAgentRuntimeMemoryProposal,
   getAgentRuntime,
   getAgentRuntimeTask,
+  handoffAgentRuntimeTask,
   rejectAgentRuntimeMemoryProposal,
   rejectAgentRuntimeTask,
   updateAgentRuntimeMemoryProposal,
   type AgentRuntimeMemoryProposal,
+  type AgentRuntimeSnapshot,
   type AgentRuntimeTask,
 } from "@/api/agent-runtime"
 import { PageHeader } from "@/components/page-header"
@@ -36,6 +38,15 @@ import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/lib/utils"
 
 const RUNTIME_POLL_MS = 3000
+type RuntimeTeammate = AgentRuntimeSnapshot["teammates"][number]
+type TaskHandoffForm = {
+  actor: string
+  note: string
+  teammateID: string
+  label: string
+  task: string
+  kind: string
+}
 
 export function TeammatesPage() {
   const { t } = useTranslation()
@@ -48,6 +59,9 @@ export function TeammatesPage() {
   const [taskReviewForms, setTaskReviewForms] = useState<
     Record<string, { actor: string; note: string }>
   >({})
+  const [taskHandoffForms, setTaskHandoffForms] = useState<Record<string, TaskHandoffForm>>(
+    {},
+  )
   const [proposalEditors, setProposalEditors] = useState<
     Record<
       string,
@@ -110,11 +124,14 @@ export function TeammatesPage() {
   }, [data?.memory_proposals, memoryStatusFilter])
 
   const effectiveSelectedTaskKey = useMemo(() => {
+    if ((data?.tasks ?? []).some((task) => taskKey(task) === selectedTaskKey)) {
+      return selectedTaskKey
+    }
     if (filteredTasks.some((task) => taskKey(task) === selectedTaskKey)) {
       return selectedTaskKey
     }
     return filteredTasks.length > 0 ? taskKey(filteredTasks[0]) : ""
-  }, [filteredTasks, selectedTaskKey])
+  }, [data?.tasks, filteredTasks, selectedTaskKey])
 
   const effectiveSelectedProposalKey = useMemo(() => {
     if (
@@ -126,8 +143,8 @@ export function TeammatesPage() {
   }, [filteredProposals, selectedProposalKey])
 
   const selectedTask = useMemo(
-    () => filteredTasks.find((task) => taskKey(task) === effectiveSelectedTaskKey) ?? null,
-    [effectiveSelectedTaskKey, filteredTasks],
+    () => (data?.tasks ?? []).find((task) => taskKey(task) === effectiveSelectedTaskKey) ?? null,
+    [data?.tasks, effectiveSelectedTaskKey],
   )
   const selectedProposal = useMemo(
     () =>
@@ -155,6 +172,11 @@ export function TeammatesPage() {
   const selectedTaskReview = taskDetail
     ? taskReviewForms[taskKey(taskDetail)] ?? { actor: "launcher", note: "" }
     : { actor: "launcher", note: "" }
+
+  const selectedTaskHandoff = taskDetail
+    ? taskHandoffForms[taskKey(taskDetail)] ??
+      createDefaultTaskHandoffForm(taskDetail, data?.teammates ?? [])
+    : createEmptyTaskHandoffForm()
 
   const selectedProposalEditor = selectedProposal
     ? proposalEditors[proposalKey(selectedProposal)] ?? {
@@ -242,6 +264,51 @@ export function TeammatesPage() {
     },
     onError: (mutationError: Error) => {
       toast.error(mutationError?.message || t("pages.agent.teammates.task_reject_error"))
+    },
+  })
+
+  const handoffTaskMutation = useMutation({
+    mutationFn: ({
+      ownerAgentID,
+      taskID,
+      actor,
+      note,
+      teammateID,
+      label,
+      task,
+      kind,
+    }: {
+      ownerAgentID: string
+      taskID: string
+      actor: string
+      note: string
+      teammateID: string
+      label: string
+      task: string
+      kind: string
+    }) =>
+      handoffAgentRuntimeTask(ownerAgentID, taskID, {
+        actor,
+        note,
+        teammate_id: teammateID || undefined,
+        label,
+        task,
+        kind,
+      }),
+    onSuccess: (task) => {
+      toast.success(t("pages.agent.teammates.task_handoff_success", { id: task.id }))
+      setTaskHandoffForms((current) => {
+        const next = { ...current }
+        if (task.parent_owner_agent_id && task.parent_task_id) {
+          delete next[`${task.parent_owner_agent_id}:${task.parent_task_id}`]
+        }
+        return next
+      })
+      revealTask(taskKey(task))
+      invalidateRuntime()
+    },
+    onError: (mutationError: Error) => {
+      toast.error(mutationError?.message || t("pages.agent.teammates.task_handoff_error"))
     },
   })
 
@@ -406,6 +473,26 @@ export function TeammatesPage() {
     }))
   }
 
+  const updateSelectedTaskHandoff = (patch: Partial<TaskHandoffForm>) => {
+    if (!taskDetail) {
+      return
+    }
+    const key = taskKey(taskDetail)
+    setTaskHandoffForms((current) => ({
+      ...current,
+      [key]: {
+        ...selectedTaskHandoff,
+        ...patch,
+      },
+    }))
+  }
+
+  const revealTask = (key: string) => {
+    setTaskStatusFilter("all")
+    setTaskFilter("")
+    setSelectedTaskKey(key)
+  }
+
   const updateSelectedProposalEditor = (
     patch: Partial<{
       actor: string
@@ -542,6 +629,8 @@ export function TeammatesPage() {
 
                 <TaskWorkbench
                   t={t}
+                  teammates={data.teammates}
+                  allTasks={data.tasks}
                   tasks={filteredTasks}
                   taskStatusEntries={taskStatusEntries}
                   taskStatusFilter={taskStatusFilter}
@@ -574,10 +663,37 @@ export function TeammatesPage() {
                       note: selectedTaskReview.note,
                     })
                   }
+                  onHandoff={(task) =>
+                    handoffTaskMutation.mutate({
+                      ownerAgentID: task.owner_agent_id,
+                      taskID: task.id,
+                      actor: selectedTaskHandoff.actor,
+                      note: selectedTaskHandoff.note,
+                      teammateID: selectedTaskHandoff.teammateID,
+                      label: selectedTaskHandoff.label,
+                      task: selectedTaskHandoff.task,
+                      kind: selectedTaskHandoff.kind,
+                    })
+                  }
                   reviewActor={selectedTaskReview.actor}
                   reviewNote={selectedTaskReview.note}
                   setReviewActor={(value) => updateSelectedTaskReview({ actor: value })}
                   setReviewNote={(value) => updateSelectedTaskReview({ note: value })}
+                  handoffActor={selectedTaskHandoff.actor}
+                  handoffNote={selectedTaskHandoff.note}
+                  handoffTeammateID={selectedTaskHandoff.teammateID}
+                  handoffLabel={selectedTaskHandoff.label}
+                  handoffTask={selectedTaskHandoff.task}
+                  handoffKind={selectedTaskHandoff.kind}
+                  setHandoffActor={(value) => updateSelectedTaskHandoff({ actor: value })}
+                  setHandoffNote={(value) => updateSelectedTaskHandoff({ note: value })}
+                  setHandoffTeammateID={(value) =>
+                    updateSelectedTaskHandoff({ teammateID: value })
+                  }
+                  setHandoffLabel={(value) => updateSelectedTaskHandoff({ label: value })}
+                  setHandoffTask={(value) => updateSelectedTaskHandoff({ task: value })}
+                  setHandoffKind={(value) => updateSelectedTaskHandoff({ kind: value })}
+                  onSelectTask={revealTask}
                   onProposeShared={(task) =>
                     createMemoryProposalMutation.mutate({
                       ownerAgentID: task.owner_agent_id,
@@ -596,6 +712,7 @@ export function TeammatesPage() {
                     cancelTaskMutation.isPending ||
                     approveTaskMutation.isPending ||
                     rejectTaskMutation.isPending ||
+                    handoffTaskMutation.isPending ||
                     createMemoryProposalMutation.isPending
                   }
                 />
@@ -658,6 +775,8 @@ export function TeammatesPage() {
 
 function TaskWorkbench(props: {
   t: (key: string, options?: Record<string, unknown>) => string
+  teammates: RuntimeTeammate[]
+  allTasks: AgentRuntimeTask[]
   tasks: AgentRuntimeTask[]
   taskStatusEntries: Array<[string, number]>
   taskStatusFilter: string
@@ -671,15 +790,43 @@ function TaskWorkbench(props: {
   onCancel: (task: AgentRuntimeTask) => void
   onApprove: (task: AgentRuntimeTask) => void
   onReject: (task: AgentRuntimeTask) => void
+  onHandoff: (task: AgentRuntimeTask) => void
   reviewActor: string
   setReviewActor: (value: string) => void
   reviewNote: string
   setReviewNote: (value: string) => void
+  handoffActor: string
+  setHandoffActor: (value: string) => void
+  handoffNote: string
+  setHandoffNote: (value: string) => void
+  handoffTeammateID: string
+  setHandoffTeammateID: (value: string) => void
+  handoffLabel: string
+  setHandoffLabel: (value: string) => void
+  handoffTask: string
+  setHandoffTask: (value: string) => void
+  handoffKind: string
+  setHandoffKind: (value: string) => void
+  onSelectTask: (value: string) => void
   onProposeShared: (task: AgentRuntimeTask) => void
   onProposeTeammate: (task: AgentRuntimeTask) => void
   busy: boolean
 }) {
   const selectedTask = props.taskDetail
+  const parentTask = selectedTask
+    ? props.allTasks.find(
+        (task) =>
+          task.owner_agent_id === selectedTask.parent_owner_agent_id &&
+          task.id === selectedTask.parent_task_id,
+      ) ?? null
+    : null
+  const childTasks = selectedTask
+    ? props.allTasks.filter(
+        (task) =>
+          task.parent_owner_agent_id === selectedTask.owner_agent_id &&
+          task.parent_task_id === selectedTask.id,
+      )
+    : []
 
   return (
     <Card>
@@ -859,6 +1006,125 @@ function TaskWorkbench(props: {
                       ) : null}
                     </div>
 
+                    {selectedTask.handoffable ? (
+                      <div className="space-y-3 rounded-xl border p-3">
+                        <div className="text-xs uppercase opacity-70">
+                          {props.t("pages.agent.teammates.handoff.title")}
+                        </div>
+                        <div className="grid gap-3 md:grid-cols-2">
+                          <div className="space-y-2">
+                            <div className="text-xs uppercase opacity-70">
+                              {props.t("pages.agent.teammates.handoff.target")}
+                            </div>
+                            <select
+                              value={props.handoffTeammateID}
+                              onChange={(event) =>
+                                props.setHandoffTeammateID(event.target.value)
+                              }
+                              className="border-input bg-background ring-offset-background flex h-10 w-full rounded-md border px-3 py-2 text-sm"
+                            >
+                              <option value="">
+                                {props.t("pages.agent.teammates.handoff.target_placeholder")}
+                              </option>
+                              {props.teammates.map((teammate) => (
+                                <option key={teammate.id} value={teammate.id}>
+                                  {teammate.name || teammate.id} ({teammate.id})
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <div className="space-y-2">
+                            <div className="text-xs uppercase opacity-70">
+                              {props.t("pages.agent.teammates.handoff.kind")}
+                            </div>
+                            <select
+                              value={props.handoffKind}
+                              onChange={(event) => props.setHandoffKind(event.target.value)}
+                              className="border-input bg-background ring-offset-background flex h-10 w-full rounded-md border px-3 py-2 text-sm"
+                            >
+                              <option value="follow_up">
+                                {props.t("pages.agent.teammates.handoff.kinds.follow_up")}
+                              </option>
+                              <option value="review">
+                                {props.t("pages.agent.teammates.handoff.kinds.review")}
+                              </option>
+                            </select>
+                          </div>
+                          <div className="space-y-2">
+                            <div className="text-xs uppercase opacity-70">
+                              {props.t("pages.agent.teammates.handoff.label")}
+                            </div>
+                            <Input
+                              value={props.handoffLabel}
+                              onChange={(event) =>
+                                props.setHandoffLabel(event.target.value)
+                              }
+                              placeholder={props.t(
+                                "pages.agent.teammates.handoff.label_placeholder",
+                              )}
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <div className="text-xs uppercase opacity-70">
+                              {props.t("pages.agent.teammates.handoff.actor")}
+                            </div>
+                            <Input
+                              value={props.handoffActor}
+                              onChange={(event) =>
+                                props.setHandoffActor(event.target.value)
+                              }
+                              placeholder={props.t(
+                                "pages.agent.teammates.handoff.actor_placeholder",
+                              )}
+                            />
+                          </div>
+                          <div className="space-y-2 md:col-span-2">
+                            <div className="text-xs uppercase opacity-70">
+                              {props.t("pages.agent.teammates.handoff.task")}
+                            </div>
+                            <Textarea
+                              value={props.handoffTask}
+                              onChange={(event) =>
+                                props.setHandoffTask(event.target.value)
+                              }
+                              placeholder={props.t(
+                                "pages.agent.teammates.handoff.task_placeholder",
+                              )}
+                              className="min-h-32"
+                            />
+                          </div>
+                          <div className="space-y-2 md:col-span-2">
+                            <div className="text-xs uppercase opacity-70">
+                              {props.t("pages.agent.teammates.handoff.note")}
+                            </div>
+                            <Textarea
+                              value={props.handoffNote}
+                              onChange={(event) =>
+                                props.setHandoffNote(event.target.value)
+                              }
+                              placeholder={props.t(
+                                "pages.agent.teammates.handoff.note_placeholder",
+                              )}
+                              className="min-h-24"
+                            />
+                          </div>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <Button
+                            size="sm"
+                            disabled={
+                              props.busy ||
+                              !props.handoffTeammateID.trim() ||
+                              !props.handoffTask.trim()
+                            }
+                            onClick={() => props.onHandoff(selectedTask)}
+                          >
+                            {props.t("pages.agent.teammates.task_actions.handoff")}
+                          </Button>
+                        </div>
+                      </div>
+                    ) : null}
+
                     {canPromoteTaskToMemory(selectedTask) ? (
                       <div className="space-y-2">
                         <div className="text-xs uppercase opacity-70">
@@ -929,6 +1195,28 @@ function TaskWorkbench(props: {
                         value={selectedTask.kind}
                       />
                       <RuntimeField
+                        label={props.t("pages.agent.teammates.task_fields.parent")}
+                        value={formatTaskRef(
+                          selectedTask.parent_owner_agent_id,
+                          selectedTask.parent_task_id,
+                        )}
+                      />
+                      <RuntimeField
+                        label={props.t("pages.agent.teammates.task_fields.root")}
+                        value={formatTaskRef(
+                          selectedTask.root_owner_agent_id,
+                          selectedTask.root_task_id,
+                        )}
+                      />
+                      <RuntimeField
+                        label={props.t("pages.agent.teammates.task_fields.handoff_kind")}
+                        value={selectedTask.handoff_kind}
+                      />
+                      <RuntimeField
+                        label={props.t("pages.agent.teammates.task_fields.handoff_by")}
+                        value={selectedTask.handoff_actor}
+                      />
+                      <RuntimeField
                         label={props.t("pages.agent.teammates.task_fields.created")}
                         value={formatTimestamp(selectedTask.created)}
                       />
@@ -955,6 +1243,43 @@ function TaskWorkbench(props: {
                         label={props.t("pages.agent.teammates.task_fields.workspaces")}
                         items={selectedTask.workspace_scope}
                       />
+                    ) : null}
+
+                    {parentTask ? (
+                      <div className="space-y-2">
+                        <div className="text-xs uppercase opacity-70">
+                          {props.t("pages.agent.teammates.handoff.parent_task")}
+                        </div>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={() => props.onSelectTask(taskKey(parentTask))}
+                        >
+                          {renderTaskSummary(parentTask)}
+                        </Button>
+                      </div>
+                    ) : null}
+
+                    {childTasks.length > 0 ? (
+                      <div className="space-y-2">
+                        <div className="text-xs uppercase opacity-70">
+                          {props.t("pages.agent.teammates.handoff.child_tasks")}
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {childTasks.map((task) => (
+                            <Button
+                              key={taskKey(task)}
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={() => props.onSelectTask(taskKey(task))}
+                            >
+                              {renderTaskSummary(task)}
+                            </Button>
+                          ))}
+                        </div>
+                      </div>
                     ) : null}
 
                     <div className="space-y-2">
@@ -1407,6 +1732,37 @@ function taskKey(task: Pick<AgentRuntimeTask, "owner_agent_id" | "id">) {
   return `${task.owner_agent_id}:${task.id}`
 }
 
+function createEmptyTaskHandoffForm(): TaskHandoffForm {
+  return {
+    actor: "launcher",
+    note: "",
+    teammateID: "",
+    label: "",
+    task: "",
+    kind: "follow_up",
+  }
+}
+
+function createDefaultTaskHandoffForm(
+  task: AgentRuntimeTask,
+  teammates: RuntimeTeammate[],
+): TaskHandoffForm {
+  const targetTeammate =
+    teammates.find((teammate) => teammate.role === "reviewer" && teammate.id !== task.teammate_id) ??
+    teammates.find((teammate) => teammate.id !== task.teammate_id) ??
+    teammates[0]
+  const kind = targetTeammate?.role === "reviewer" ? "review" : "follow_up"
+  const labelBase = task.label?.trim() || task.id
+  return {
+    actor: "launcher",
+    note: "",
+    teammateID: targetTeammate?.id ?? "",
+    label: kind === "review" ? `Review: ${labelBase}` : `Follow-up: ${labelBase}`,
+    task: buildDefaultHandoffTaskText(task, kind),
+    kind,
+  }
+}
+
 function proposalKey(
   proposal: Pick<AgentRuntimeMemoryProposal, "owner_agent_id" | "id">,
 ) {
@@ -1454,4 +1810,38 @@ function isProposalEditorDirty(
     editor.title.trim() !== (proposal.title ?? "") ||
     editor.content.trim() !== proposal.content.trim()
   )
+}
+
+function buildDefaultHandoffTaskText(task: AgentRuntimeTask, kind: string) {
+  const intro =
+    kind === "review"
+      ? "Review the completed task below and provide feedback, risks, or next steps."
+      : "Continue from the completed task below and handle the next follow-up work."
+  const parts = [
+    intro,
+    "",
+    `Source task ID: ${task.id}`,
+    task.label?.trim() ? `Source label: ${task.label.trim()}` : "",
+    task.teammate_id?.trim() ? `Source teammate: ${task.teammate_id.trim()}` : "",
+    `Source status: ${task.status}`,
+    "",
+    "Original task:",
+    task.task.trim(),
+  ]
+  if (task.result?.trim()) {
+    parts.push("", "Result:", task.result.trim())
+  }
+  return parts.filter(Boolean).join("\n")
+}
+
+function formatTaskRef(ownerAgentID?: string, taskID?: string) {
+  if (!ownerAgentID?.trim() || !taskID?.trim()) {
+    return ""
+  }
+  return `${ownerAgentID}:${taskID}`
+}
+
+function renderTaskSummary(task: AgentRuntimeTask) {
+  const base = task.label?.trim() || task.id
+  return `${task.owner_agent_id}:${base}`
 }

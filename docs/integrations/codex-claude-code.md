@@ -9,12 +9,25 @@ This lets you keep PicoClaw's channels, launcher, routing, cron, and workspace
 behavior while delegating model execution to a local Codex CLI or Claude Code
 installation.
 
+With the current teammate runtime, these integrations work best as explicit
+teammate roles such as:
+
+- `coder`
+- `reviewer`
+- `researcher`
+
+That means Codex CLI and Claude Code are no longer just "another model entry".
+They can participate in tracked tasks, approvals, memory review, and handoff
+chains inside the launcher.
+
 ## Good Fits
 
 - reuse existing local CLI auth and workflows
 - bring coding-capable models behind PicoClaw channels
 - mix CLI-backed coding models with hosted API-backed models in one
   `model_list`
+- build a buddy system where one coding teammate hands work to another for
+  review or follow-up
 
 ## Prerequisites
 
@@ -65,6 +78,8 @@ Notes:
 - `workspace` controls the subprocess working directory.
 - `execution_mode` controls whether PicoClaw adds permissive CLI flags.
 - you can keep a hosted fallback model in the same config.
+- teammate profiles can sit above these model entries and provide role,
+  approval, and memory scope metadata.
 
 ## Operational Behavior
 

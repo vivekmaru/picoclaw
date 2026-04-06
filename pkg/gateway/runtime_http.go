@@ -24,6 +24,16 @@ type runtimeReviewActionRequest struct {
 	Note  string `json:"note"`
 }
 
+type runtimeTaskHandoffRequest struct {
+	Actor      string `json:"actor"`
+	Note       string `json:"note"`
+	AgentID    string `json:"agent_id"`
+	TeammateID string `json:"teammate_id"`
+	Label      string `json:"label"`
+	Task       string `json:"task"`
+	Kind       string `json:"kind"`
+}
+
 type runtimeMemoryProposalUpdateRequest struct {
 	Actor   string `json:"actor"`
 	Scope   string `json:"scope"`
@@ -102,6 +112,27 @@ func registerRuntimeHTTPHandlers(agentLoop *agent.AgentLoop, channelManager http
 				return
 			}
 			task, err := agentLoop.RejectRuntimeTask(ownerAgentID, taskID, req.Actor, req.Note)
+			if err != nil {
+				writeGatewayRuntimeTaskError(w, err)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(task)
+		case r.Method == http.MethodPost && action == "handoff":
+			var req runtimeTaskHandoffRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+				writeGatewayRuntimeError(w, http.StatusBadRequest, "invalid request body")
+				return
+			}
+			task, err := agentLoop.HandoffRuntimeTask(ownerAgentID, taskID, agent.RuntimeTaskHandoffRequest{
+				Actor:      req.Actor,
+				Note:       req.Note,
+				AgentID:    req.AgentID,
+				TeammateID: req.TeammateID,
+				Label:      req.Label,
+				Task:       req.Task,
+				Kind:       req.Kind,
+			})
 			if err != nil {
 				writeGatewayRuntimeTaskError(w, err)
 				return
@@ -249,6 +280,10 @@ func writeGatewayRuntimeTaskError(w http.ResponseWriter, err error) {
 		writeGatewayRuntimeError(w, http.StatusConflict, err.Error())
 	case errors.Is(err, agent.ErrRuntimeTaskNotAwaitingApproval):
 		writeGatewayRuntimeError(w, http.StatusConflict, err.Error())
+	case errors.Is(err, agent.ErrRuntimeTaskNotHandoffable):
+		writeGatewayRuntimeError(w, http.StatusConflict, err.Error())
+	case errors.Is(err, agent.ErrRuntimeTaskInvalid):
+		writeGatewayRuntimeError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, agent.ErrRuntimeMemoryProposalNotFound):
 		writeGatewayRuntimeError(w, http.StatusNotFound, err.Error())
 	case errors.Is(err, agent.ErrRuntimeMemoryProposalNotPending):
