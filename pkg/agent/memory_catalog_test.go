@@ -127,6 +127,86 @@ func TestAgentLoop_GetRuntimeMemoryCatalog_LegacyMemoryFallback(t *testing.T) {
 	}
 }
 
+func TestAgentLoop_GetRuntimeMemoryCatalog_DoesNotSplitContentHeadings(t *testing.T) {
+	workspace := t.TempDir()
+	store := NewMemoryProposalStore(workspace)
+	proposal, err := store.Create(MemoryProposalRequest{
+		Scope:     "shared",
+		Domain:    "shared_team",
+		Target:    "long_term",
+		Kind:      "task_result",
+		EntryType: "fact",
+		Title:     "Structured notes",
+		Content: strings.Join([]string{
+			"Keep this as one entry.",
+			"",
+			"## Summary",
+			"",
+			"- This heading is part of the body, not a new memory entry.",
+		}, "\n"),
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if _, err := store.Approve(proposal.ID, "launcher", ""); err != nil {
+		t.Fatalf("Approve() error = %v", err)
+	}
+
+	loop := &AgentLoop{registry: &AgentRegistry{
+		agents: map[string]*AgentInstance{
+			"main": {ID: "main", Workspace: workspace},
+		},
+	}}
+	catalog := loop.GetRuntimeMemoryCatalog()
+	if len(catalog.Entries) != 1 {
+		t.Fatalf("len(Entries) = %d, want 1", len(catalog.Entries))
+	}
+	if !strings.Contains(catalog.Entries[0].Content, "## Summary") {
+		t.Fatalf("entry content missing embedded heading: %q", catalog.Entries[0].Content)
+	}
+}
+
+func TestAgentLoop_GetRuntimeMemoryCatalog_DeduplicatesAliasedScopesByPath(t *testing.T) {
+	workspace := t.TempDir()
+	aliasScope := "teammate:review:qa"
+	mem := NewMemoryStoreForScope(workspace, aliasScope)
+	if err := mem.WriteLongTerm(strings.Join([]string{
+		"## Review QA Memory",
+		"",
+		"- Added: 2026-04-06 12:00:00 UTC",
+		"- Domain: teammate_local",
+		"",
+		"One canonical entry",
+	}, "\n")); err != nil {
+		t.Fatalf("WriteLongTerm() error = %v", err)
+	}
+
+	registry := &AgentRegistry{
+		agents: map[string]*AgentInstance{
+			"main": {ID: "main", Workspace: workspace},
+		},
+		teammates: map[string]TeammateProfile{
+			"review-qa": {
+				ID:          "review-qa",
+				AgentID:     "main",
+				MemoryScope: aliasScope,
+			},
+		},
+	}
+	loop := &AgentLoop{registry: registry}
+	catalog := loop.GetRuntimeMemoryCatalog()
+
+	if len(catalog.Scopes) != 2 {
+		t.Fatalf("len(Scopes) = %d, want 2 (shared + alias)", len(catalog.Scopes))
+	}
+	if len(catalog.Entries) != 1 {
+		t.Fatalf("len(Entries) = %d, want 1", len(catalog.Entries))
+	}
+	if got := catalog.Summary.EntryCount; got != 1 {
+		t.Fatalf("EntryCount = %d, want 1", got)
+	}
+}
+
 func TestAgentLoop_ExportRuntimeMemoryCatalog_JSON(t *testing.T) {
 	workspace := t.TempDir()
 	mem := NewMemoryStoreForScope(workspace, "shared")

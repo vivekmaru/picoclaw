@@ -253,7 +253,11 @@ func runtimeMemoryCatalogScopesForWorkspace(registry *AgentRegistry, ref runtime
 	scopeMap := make(map[string]RuntimeMemoryScopeInfo)
 	addScope := func(scope string) {
 		mem := NewMemoryStoreForScope(ref.Workspace, scope)
-		scopeMap[mem.Scope()] = RuntimeMemoryScopeInfo{
+		pathKey := filepath.Clean(mem.LongTermPath())
+		if _, exists := scopeMap[pathKey]; exists {
+			return
+		}
+		scopeMap[pathKey] = RuntimeMemoryScopeInfo{
 			OwnerAgentID: ref.OwnerAgentID,
 			Workspace:    ref.Workspace,
 			Scope:        mem.Scope(),
@@ -423,8 +427,8 @@ func splitRuntimeMemoryCatalogSections(content string) (string, []runtimeMemoryC
 		currentLines = currentLines[:0]
 	}
 
-	for _, line := range lines {
-		if strings.HasPrefix(line, "## ") {
+	for idx, line := range lines {
+		if runtimeMemoryCatalogSectionStartsAt(lines, idx) {
 			flush()
 			currentTitle = strings.TrimSpace(strings.TrimPrefix(line, "## "))
 			continue
@@ -437,6 +441,24 @@ func splitRuntimeMemoryCatalogSections(content string) (string, []runtimeMemoryC
 	}
 	flush()
 	return strings.TrimSpace(strings.Join(preamble, "\n")), sections
+}
+
+func runtimeMemoryCatalogSectionStartsAt(lines []string, idx int) bool {
+	if idx < 0 || idx >= len(lines) {
+		return false
+	}
+	if !strings.HasPrefix(lines[idx], "## ") {
+		return false
+	}
+	next := idx + 1
+	for next < len(lines) && strings.TrimSpace(lines[next]) == "" {
+		next++
+	}
+	if next >= len(lines) {
+		return false
+	}
+	key, _, ok := parseRuntimeMemoryMetadataLine(strings.TrimSpace(lines[next]))
+	return ok && key == "Added"
 }
 
 func parseRuntimeMemoryCatalogSection(title, body, scope string) runtimeMemoryParsedSection {
