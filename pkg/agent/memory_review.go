@@ -22,11 +22,14 @@ var (
 type MemoryProposal struct {
 	ID                  string `json:"id"`
 	Scope               string `json:"scope"`
+	Domain              string `json:"domain,omitempty"`
 	Target              string `json:"target"`
 	Kind                string `json:"kind"`
+	EntryType           string `json:"entry_type,omitempty"`
 	Status              string `json:"status"`
 	Title               string `json:"title,omitempty"`
 	Content             string `json:"content"`
+	Confidence          string `json:"confidence,omitempty"`
 	SourceTaskID        string `json:"source_task_id,omitempty"`
 	SourceAgentID       string `json:"source_agent_id,omitempty"`
 	SourceTeammateID    string `json:"source_teammate_id,omitempty"`
@@ -42,10 +45,13 @@ type MemoryProposal struct {
 
 type MemoryProposalRequest struct {
 	Scope               string
+	Domain              string
 	Target              string
 	Kind                string
+	EntryType           string
 	Title               string
 	Content             string
+	Confidence          string
 	SourceTaskID        string
 	SourceAgentID       string
 	SourceTeammateID    string
@@ -54,9 +60,12 @@ type MemoryProposalRequest struct {
 }
 
 type MemoryProposalUpdate struct {
-	Scope   string
-	Title   string
-	Content string
+	Scope      string
+	Domain     string
+	EntryType  string
+	Title      string
+	Content    string
+	Confidence string
 }
 
 type memoryProposalStoreFile struct {
@@ -99,6 +108,10 @@ func (s *MemoryProposalStore) Create(req MemoryProposalRequest) (MemoryProposal,
 	if scope == "" {
 		scope = "shared"
 	}
+	domain, err := normalizeMemoryProposalDomain(req.Domain, scope)
+	if err != nil {
+		return MemoryProposal{}, err
+	}
 	target := strings.TrimSpace(req.Target)
 	if target == "" {
 		target = "long_term"
@@ -110,17 +123,28 @@ func (s *MemoryProposalStore) Create(req MemoryProposalRequest) (MemoryProposal,
 	if kind == "" {
 		kind = "task_result"
 	}
+	entryType, err := normalizeMemoryProposalEntryType(req.EntryType)
+	if err != nil {
+		return MemoryProposal{}, err
+	}
+	confidence, err := normalizeMemoryProposalConfidence(req.Confidence)
+	if err != nil {
+		return MemoryProposal{}, err
+	}
 
 	id := fmt.Sprintf("memory-%d", s.nextID)
 	s.nextID++
 	proposal := &MemoryProposal{
 		ID:                  id,
 		Scope:               scope,
+		Domain:              domain,
 		Target:              target,
 		Kind:                kind,
+		EntryType:           entryType,
 		Status:              "pending",
 		Title:               strings.TrimSpace(req.Title),
 		Content:             content,
+		Confidence:          confidence,
 		SourceTaskID:        strings.TrimSpace(req.SourceTaskID),
 		SourceAgentID:       strings.TrimSpace(req.SourceAgentID),
 		SourceTeammateID:    strings.TrimSpace(req.SourceTeammateID),
@@ -216,14 +240,29 @@ func (s *MemoryProposalStore) Update(id, actor string, update MemoryProposalUpda
 	if scope == "" {
 		return MemoryProposal{}, fmt.Errorf("%w: memory proposal scope is required", errMemoryProposalInvalid)
 	}
+	domain, err := normalizeMemoryProposalDomain(update.Domain, scope)
+	if err != nil {
+		return MemoryProposal{}, fmt.Errorf("%w: %v", errMemoryProposalInvalid, err)
+	}
+	entryType, err := normalizeMemoryProposalEntryType(update.EntryType)
+	if err != nil {
+		return MemoryProposal{}, fmt.Errorf("%w: %v", errMemoryProposalInvalid, err)
+	}
 	content := strings.TrimSpace(update.Content)
 	if content == "" {
 		return MemoryProposal{}, fmt.Errorf("%w: memory proposal content is required", errMemoryProposalInvalid)
 	}
+	confidence, err := normalizeMemoryProposalConfidence(update.Confidence)
+	if err != nil {
+		return MemoryProposal{}, fmt.Errorf("%w: %v", errMemoryProposalInvalid, err)
+	}
 
 	proposal.Scope = scope
+	proposal.Domain = domain
+	proposal.EntryType = entryType
 	proposal.Title = strings.TrimSpace(update.Title)
 	proposal.Content = content
+	proposal.Confidence = confidence
 	proposal.UpdatedAt = time.Now().UnixMilli()
 	proposal.UpdatedBy = defaultReviewActor(actor)
 	if err := s.persistLocked(); err != nil {
@@ -348,6 +387,21 @@ func formatMemoryProposalEntry(proposal MemoryProposal) string {
 	sb.WriteString("- Added: ")
 	sb.WriteString(time.UnixMilli(proposal.Created).UTC().Format("2006-01-02 15:04:05 UTC"))
 	sb.WriteString("\n")
+	if proposal.Domain != "" {
+		sb.WriteString("- Domain: ")
+		sb.WriteString(proposal.Domain)
+		sb.WriteString("\n")
+	}
+	if proposal.EntryType != "" {
+		sb.WriteString("- Type: ")
+		sb.WriteString(proposal.EntryType)
+		sb.WriteString("\n")
+	}
+	if proposal.Confidence != "" {
+		sb.WriteString("- Confidence: ")
+		sb.WriteString(proposal.Confidence)
+		sb.WriteString("\n")
+	}
 	if proposal.SourceTaskID != "" {
 		sb.WriteString("- Source Task: ")
 		sb.WriteString(proposal.SourceTaskID)
@@ -387,4 +441,50 @@ func parseMemoryProposalNumericID(id string) int {
 		return 0
 	}
 	return num
+}
+
+func normalizeMemoryProposalDomain(domain, scope string) (string, error) {
+	domain = strings.TrimSpace(domain)
+	if domain == "" {
+		switch {
+		case scope == "shared":
+			domain = "shared_team"
+		case strings.HasPrefix(scope, "teammate:"):
+			domain = "teammate_local"
+		default:
+			domain = "project"
+		}
+	}
+	switch domain {
+	case "personal", "project", "server", "shared_team", "teammate_local":
+		return domain, nil
+	default:
+		return "", fmt.Errorf("unsupported memory proposal domain %q", domain)
+	}
+}
+
+func normalizeMemoryProposalEntryType(entryType string) (string, error) {
+	entryType = strings.TrimSpace(entryType)
+	if entryType == "" {
+		return "fact", nil
+	}
+	switch entryType {
+	case "fact", "preference", "runbook", "decision", "incident", "todo":
+		return entryType, nil
+	default:
+		return "", fmt.Errorf("unsupported memory proposal type %q", entryType)
+	}
+}
+
+func normalizeMemoryProposalConfidence(confidence string) (string, error) {
+	confidence = strings.TrimSpace(confidence)
+	if confidence == "" {
+		return "", nil
+	}
+	switch confidence {
+	case "low", "medium", "high":
+		return confidence, nil
+	default:
+		return "", fmt.Errorf("unsupported memory proposal confidence %q", confidence)
+	}
 }

@@ -12,10 +12,13 @@ func TestMemoryProposalStore_ApproveWritesMemory(t *testing.T) {
 
 	proposal, err := store.Create(MemoryProposalRequest{
 		Scope:         "teammate:reviewer",
+		Domain:        "teammate_local",
 		Target:        "long_term",
 		Kind:          "task_result",
+		EntryType:     "decision",
 		Title:         "Patch review summary",
 		Content:       "Always check migration paths before falling back.",
+		Confidence:    "high",
 		SourceTaskID:  "subagent-3",
 		SourceAgentID: "main",
 	})
@@ -35,6 +38,15 @@ func TestMemoryProposalStore_ApproveWritesMemory(t *testing.T) {
 	content := mem.ReadLongTerm()
 	if !strings.Contains(content, "Patch review summary") {
 		t.Fatalf("memory content missing title: %s", content)
+	}
+	if !strings.Contains(content, "Domain: teammate_local") {
+		t.Fatalf("memory content missing domain metadata: %s", content)
+	}
+	if !strings.Contains(content, "Type: decision") {
+		t.Fatalf("memory content missing type metadata: %s", content)
+	}
+	if !strings.Contains(content, "Confidence: high") {
+		t.Fatalf("memory content missing confidence metadata: %s", content)
 	}
 	if !strings.Contains(content, "Always check migration paths before falling back.") {
 		t.Fatalf("memory content missing proposal body: %s", content)
@@ -83,9 +95,12 @@ func TestMemoryProposalStore_UpdatePendingProposal(t *testing.T) {
 	}
 
 	updated, err := store.Update(proposal.ID, "operator", MemoryProposalUpdate{
-		Scope:   "teammate:reviewer",
-		Title:   "Edited Title",
-		Content: "Edited content",
+		Scope:      "teammate:reviewer",
+		Domain:     "teammate_local",
+		EntryType:  "runbook",
+		Title:      "Edited Title",
+		Content:    "Edited content",
+		Confidence: "medium",
 	})
 	if err != nil {
 		t.Fatalf("Update() error = %v", err)
@@ -96,8 +111,17 @@ func TestMemoryProposalStore_UpdatePendingProposal(t *testing.T) {
 	if updated.Title != "Edited Title" {
 		t.Fatalf("updated.Title = %q, want Edited Title", updated.Title)
 	}
+	if updated.Domain != "teammate_local" {
+		t.Fatalf("updated.Domain = %q, want teammate_local", updated.Domain)
+	}
+	if updated.EntryType != "runbook" {
+		t.Fatalf("updated.EntryType = %q, want runbook", updated.EntryType)
+	}
 	if updated.Content != "Edited content" {
 		t.Fatalf("updated.Content = %q, want Edited content", updated.Content)
+	}
+	if updated.Confidence != "medium" {
+		t.Fatalf("updated.Confidence = %q, want medium", updated.Confidence)
 	}
 	if updated.UpdatedBy != "operator" {
 		t.Fatalf("updated.UpdatedBy = %q, want operator", updated.UpdatedBy)
@@ -121,8 +145,36 @@ func TestMemoryProposalStore_UpdatePendingProposalRejectsBlankContent(t *testing
 	}
 
 	_, err = store.Update(proposal.ID, "operator", MemoryProposalUpdate{
+		Scope:      "shared",
+		Domain:     "shared_team",
+		EntryType:  "fact",
+		Content:    "   ",
+		Confidence: "low",
+	})
+	if !errors.Is(err, errMemoryProposalInvalid) {
+		t.Fatalf("Update() error = %v, want errMemoryProposalInvalid", err)
+	}
+}
+
+func TestMemoryProposalStore_UpdatePendingProposalRejectsUnknownType(t *testing.T) {
+	workspace := t.TempDir()
+	store := NewMemoryProposalStore(workspace)
+
+	proposal, err := store.Create(MemoryProposalRequest{
 		Scope:   "shared",
-		Content: "   ",
+		Target:  "long_term",
+		Content: "Original content",
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	_, err = store.Update(proposal.ID, "operator", MemoryProposalUpdate{
+		Scope:      "shared",
+		Domain:     "shared_team",
+		EntryType:  "unknown",
+		Content:    "Updated content",
+		Confidence: "low",
 	})
 	if !errors.Is(err, errMemoryProposalInvalid) {
 		t.Fatalf("Update() error = %v, want errMemoryProposalInvalid", err)

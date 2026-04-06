@@ -42,11 +42,14 @@ export interface AgentRuntimeMemoryProposal {
   owner_agent_id: string
   id: string
   scope: string
+  domain?: string
   target: string
   kind: string
+  entry_type?: string
   status: string
   title?: string
   content: string
+  confidence?: string
   source_task_id?: string
   source_agent_id?: string
   source_teammate_id?: string
@@ -226,7 +229,15 @@ export async function createAgentRuntimeMemoryProposal(
 export async function updateAgentRuntimeMemoryProposal(
   ownerAgentID: string,
   proposalID: string,
-  payload: { actor: string; scope: string; title: string; content: string },
+  payload: {
+    actor: string
+    scope: string
+    domain: string
+    entry_type: string
+    title: string
+    content: string
+    confidence: string
+  },
 ): Promise<AgentRuntimeMemoryProposal> {
   const res = await launcherFetch(
     `/api/agent/runtime/memory-proposals/${encodeURIComponent(ownerAgentID)}/${encodeURIComponent(proposalID)}/update`,

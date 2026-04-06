@@ -35,10 +35,13 @@ type runtimeTaskHandoffRequest struct {
 }
 
 type runtimeMemoryProposalUpdateRequest struct {
-	Actor   string `json:"actor"`
-	Scope   string `json:"scope"`
-	Title   string `json:"title"`
-	Content string `json:"content"`
+	Actor      string `json:"actor"`
+	Scope      string `json:"scope"`
+	Domain     string `json:"domain"`
+	EntryType  string `json:"entry_type"`
+	Title      string `json:"title"`
+	Content    string `json:"content"`
+	Confidence string `json:"confidence"`
 }
 
 func registerRuntimeHTTPHandlers(agentLoop *agent.AgentLoop, channelManager httpHandlerRegistrar, authToken string) {
@@ -179,9 +182,12 @@ func registerRuntimeHTTPHandlers(agentLoop *agent.AgentLoop, channelManager http
 				return
 			}
 			proposal, err := agentLoop.UpdateRuntimeMemoryProposal(ownerAgentID, proposalID, req.Actor, agent.MemoryProposalUpdate{
-				Scope:   req.Scope,
-				Title:   req.Title,
-				Content: req.Content,
+				Scope:      req.Scope,
+				Domain:     req.Domain,
+				EntryType:  req.EntryType,
+				Title:      req.Title,
+				Content:    req.Content,
+				Confidence: req.Confidence,
 			})
 			if err != nil {
 				writeGatewayRuntimeTaskError(w, err)

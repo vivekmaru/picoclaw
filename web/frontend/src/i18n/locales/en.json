@@ -472,6 +472,11 @@
           "approve": "Approve Memory",
           "reject": "Reject Memory"
         },
+        "memory_filters": {
+          "search_placeholder": "Filter by title, content, scope, teammate, domain, or type",
+          "domain_all": "All domains",
+          "type_all": "All types"
+        },
         "review_fields": {
           "actor": "Reviewer",
           "actor_placeholder": "launcher",
@@ -510,11 +515,14 @@
         },
         "memory_fields": {
           "scope": "Scope",
+          "domain": "Domain",
           "target": "Target",
           "kind": "Kind",
+          "entry_type": "Type",
           "status": "Status",
           "title": "Title",
           "title_placeholder": "Memory summary",
+          "confidence": "Confidence",
           "source_task": "Source Task",
           "source_teammate": "Source Teammate",
           "created": "Created",
