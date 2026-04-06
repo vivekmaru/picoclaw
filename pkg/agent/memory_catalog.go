@@ -402,7 +402,7 @@ func parseRuntimeMemoryCatalogEntries(ownerAgentID, workspace string, mem *Memor
 	baseIDs := make([]string, len(parsed))
 	baseIDCounts := make(map[string]int, len(parsed))
 	for i, section := range parsed {
-		baseID := runtimeMemoryCatalogEntryBaseID(ownerAgentID, workspace, mem.Scope(), mem.LongTermPath(), section)
+		baseID := runtimeMemoryCatalogEntryBaseID(workspace, mem.Scope(), mem.LongTermPath(), section)
 		baseIDs[i] = baseID
 		baseIDCounts[baseID]++
 	}
@@ -441,11 +441,10 @@ func parseRuntimeMemoryCatalogEntries(ownerAgentID, workspace string, mem *Memor
 }
 
 func runtimeMemoryCatalogEntryBaseID(
-	ownerAgentID, workspace, scope, sourcePath string,
+	workspace, scope, sourcePath string,
 	section runtimeMemoryParsedSection,
 ) string {
 	sum := sha256.Sum256([]byte(strings.Join([]string{
-		ownerAgentID,
 		workspace,
 		scope,
 		sourcePath,

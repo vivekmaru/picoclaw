@@ -3,6 +3,8 @@ package agent
 import (
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -238,6 +240,49 @@ func TestAgentLoop_MemoryCatalogEntryIDsRemainStableWhenEarlierEntriesShift(t *t
 	}
 }
 
+func TestAgentLoop_MemoryCatalogEntryIDsRemainStableWhenOwnerAgentChanges(t *testing.T) {
+	workspace := t.TempDir()
+	mem := NewMemoryStoreForScope(workspace, "shared")
+	content := strings.Join([]string{
+		"## Stable Target",
+		"",
+		"- Added: 2026-04-07 11:00:00 UTC",
+		"- Domain: shared_team",
+		"",
+		"Target body",
+	}, "\n")
+	if err := mem.WriteLongTerm(content); err != nil {
+		t.Fatalf("WriteLongTerm() error = %v", err)
+	}
+
+	firstLoop := &AgentLoop{registry: &AgentRegistry{
+		agents: map[string]*AgentInstance{
+			"zeta": {ID: "zeta", Workspace: workspace},
+		},
+	}}
+	firstCatalog := firstLoop.GetRuntimeMemoryCatalog()
+	if len(firstCatalog.Entries) != 1 {
+		t.Fatalf("len(firstCatalog.Entries) = %d, want 1", len(firstCatalog.Entries))
+	}
+
+	secondLoop := &AgentLoop{registry: &AgentRegistry{
+		agents: map[string]*AgentInstance{
+			"alpha": {ID: "alpha", Workspace: workspace},
+		},
+	}}
+	secondCatalog := secondLoop.GetRuntimeMemoryCatalog()
+	if len(secondCatalog.Entries) != 1 {
+		t.Fatalf("len(secondCatalog.Entries) = %d, want 1", len(secondCatalog.Entries))
+	}
+
+	if firstCatalog.Entries[0].OwnerAgentID == secondCatalog.Entries[0].OwnerAgentID {
+		t.Fatalf("expected owner agent to change, got %q", firstCatalog.Entries[0].OwnerAgentID)
+	}
+	if firstCatalog.Entries[0].ID != secondCatalog.Entries[0].ID {
+		t.Fatalf("stable target ID changed after owner switch: before=%q after=%q", firstCatalog.Entries[0].ID, secondCatalog.Entries[0].ID)
+	}
+}
+
 func TestRuntimeMemoryCatalogStateStoreSharedByWorkspace(t *testing.T) {
 	workspace := t.TempDir()
 	first := getRuntimeMemoryCatalogStateStore(workspace)
@@ -257,6 +302,38 @@ func TestRuntimeMemoryCatalogStateStoreSharedByWorkspace(t *testing.T) {
 	}
 	if _, ok := second.getCopy("memory-a"); !ok {
 		t.Fatal("expected second store to observe pin written by first store")
+	}
+}
+
+func TestRuntimeMemoryCatalogStateStoreLoadFailureBlocksMutation(t *testing.T) {
+	workspace := t.TempDir()
+	stateFile := filepath.Join(workspace, "state", "memory", "catalog_state.json")
+	if err := os.MkdirAll(filepath.Dir(stateFile), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(stateFile, []byte("{not-json"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	store := getRuntimeMemoryCatalogStateStore(workspace)
+	if store.loadErr == nil {
+		t.Fatal("expected loadErr for invalid catalog_state.json")
+	}
+	if err := store.setPinned("memory-a", true, "operator"); err == nil {
+		t.Fatal("expected setPinned() to fail when state file load fails")
+	}
+	if err := store.setArchived("memory-a", true, "operator"); err == nil {
+		t.Fatal("expected setArchived() to fail when state file load fails")
+	}
+	if _, ok := store.getCopy("memory-a"); ok {
+		t.Fatal("unexpected lifecycle state mutation after load failure")
+	}
+	data, err := os.ReadFile(stateFile)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if string(data) != "{not-json" {
+		t.Fatalf("catalog_state.json was rewritten after load failure: %q", string(data))
 	}
 }
 

@@ -31,6 +31,7 @@ type runtimeMemoryCatalogStateFile struct {
 type runtimeMemoryCatalogStateStore struct {
 	stateFile string
 	entries   map[string]*runtimeMemoryCatalogEntryState
+	loadErr   error
 	mu        sync.RWMutex
 }
 
@@ -53,7 +54,7 @@ func getRuntimeMemoryCatalogStateStore(workspace string) *runtimeMemoryCatalogSt
 		stateFile: filepath.Join(workspace, "state", "memory", "catalog_state.json"),
 		entries:   make(map[string]*runtimeMemoryCatalogEntryState),
 	}
-	_ = store.load()
+	store.loadErr = store.load()
 	actual, _ := runtimeMemoryCatalogStateStores.LoadOrStore(workspace, store)
 	return actual.(*runtimeMemoryCatalogStateStore)
 }
@@ -72,6 +73,9 @@ func (s *runtimeMemoryCatalogStateStore) apply(entry *RuntimeMemoryEntryInfo) {
 	if s == nil || entry == nil {
 		return
 	}
+	if s.loadErr != nil {
+		return
+	}
 	state, ok := s.getCopy(entry.ID)
 	if !ok {
 		return
@@ -87,6 +91,9 @@ func (s *runtimeMemoryCatalogStateStore) apply(entry *RuntimeMemoryEntryInfo) {
 func (s *runtimeMemoryCatalogStateStore) setPinned(id string, pinned bool, actor string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.loadErr != nil {
+		return fmt.Errorf("load memory catalog state: %w", s.loadErr)
+	}
 	entry := s.ensureEntryLocked(id)
 	entry.Pinned = pinned
 	if pinned {
@@ -102,6 +109,9 @@ func (s *runtimeMemoryCatalogStateStore) setPinned(id string, pinned bool, actor
 func (s *runtimeMemoryCatalogStateStore) setArchived(id string, archived bool, actor string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.loadErr != nil {
+		return fmt.Errorf("load memory catalog state: %w", s.loadErr)
+	}
 	entry := s.ensureEntryLocked(id)
 	entry.Archived = archived
 	if archived {
