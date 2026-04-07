@@ -387,6 +387,8 @@ func TestAgentLoopHandoffRuntimeTaskCreatesLinkedChildTask(t *testing.T) {
 		t.Fatalf("RequesterTeammateID = %q, want coder", handoffTask.RequesterTeammateID)
 	}
 
+	waitForRuntimeTaskTerminalState(t, manager, handoffTask.ID)
+
 	snapshot := loop.GetRuntimeSnapshot()
 	foundChild := false
 	for _, task := range snapshot.Tasks {

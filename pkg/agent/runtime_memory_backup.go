@@ -253,7 +253,7 @@ func validateRuntimeMemoryBackupWorkspace(workspace RuntimeMemoryBackupWorkspace
 			return fmt.Errorf("%w: backup scope is required", ErrRuntimeMemoryBackupInvalid)
 		}
 		for _, note := range scope.DailyNotes {
-			if !runtimeMemoryBackupRelativePathOK(note.RelativePath) {
+			if !runtimeMemoryBackupDailyNotePathOK(note.RelativePath) {
 				return fmt.Errorf("%w: invalid daily note path %q", ErrRuntimeMemoryBackupInvalid, note.RelativePath)
 			}
 		}
@@ -274,7 +274,7 @@ func restoreRuntimeMemoryBackupWorkspace(workspace string, backup RuntimeMemoryB
 		for _, note := range scopeBackup.DailyNotes {
 			relPath := filepath.FromSlash(note.RelativePath)
 			notePath := filepath.Join(mem.memoryDir, relPath)
-			if !runtimeMemoryBackupRelativePathOK(note.RelativePath) {
+			if !runtimeMemoryBackupDailyNotePathOK(note.RelativePath) {
 				return fmt.Errorf("%w: invalid daily note path %q", ErrRuntimeMemoryBackupInvalid, note.RelativePath)
 			}
 			if err := os.MkdirAll(filepath.Dir(notePath), 0o755); err != nil {
@@ -323,9 +323,12 @@ func persistRuntimeMemoryCatalogStateBackup(workspace string, entries []runtimeM
 	if err != nil {
 		return err
 	}
+	if err := fileutil.WriteFileAtomic(stateFile, payload, 0o600); err != nil {
+		return err
+	}
 	store := getRuntimeMemoryCatalogStateStore(workspace)
 	store.replace(entries)
-	return fileutil.WriteFileAtomic(stateFile, payload, 0o600)
+	return nil
 }
 
 func runtimeMemoryBackupRelativePathOK(path string) bool {

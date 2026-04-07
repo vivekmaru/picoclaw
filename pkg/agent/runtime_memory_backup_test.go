@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -186,5 +187,74 @@ func TestAgentLoop_RestoreRuntimeMemoryBackup(t *testing.T) {
 	stateEntries := getRuntimeMemoryCatalogStateStore(workspace).listCopies()
 	if len(stateEntries) != 1 || stateEntries[0].ID != "memory-restored" || !stateEntries[0].Pinned {
 		t.Fatalf("restored lifecycle entries = %#v", stateEntries)
+	}
+}
+
+func TestAgentLoop_RestoreRuntimeMemoryBackupRejectsNonDailyNotePaths(t *testing.T) {
+	workspace := t.TempDir()
+	registry := &AgentRegistry{
+		agents: map[string]*AgentInstance{
+			"main": {ID: "main", Workspace: workspace},
+		},
+	}
+	loop := &AgentLoop{registry: registry}
+
+	backup := RuntimeMemoryBackup{
+		Version:     runtimeMemoryBackupVersion,
+		GeneratedAt: time.Now().UnixMilli(),
+		Workspaces: []RuntimeMemoryBackupWorkspace{
+			{
+				OwnerAgentID: "main",
+				Workspace:    workspace,
+				Scopes: []RuntimeMemoryBackupScope{
+					{
+						Scope:           "shared",
+						LongTermContent: "## Shared\n\nExisting shared memory",
+						DailyNotes: []RuntimeMemoryBackupDailyNote{
+							{RelativePath: "MEMORY.md", Content: "this must never restore as a daily note"},
+						},
+					},
+				},
+			},
+		},
+	}
+	payload, err := json.Marshal(backup)
+	if err != nil {
+		t.Fatalf("Marshal(backup) error = %v", err)
+	}
+
+	if _, err := loop.RestoreRuntimeMemoryBackup(payload, "validate"); err == nil || !errors.Is(err, ErrRuntimeMemoryBackupInvalid) {
+		t.Fatalf("RestoreRuntimeMemoryBackup(validate) error = %v, want ErrRuntimeMemoryBackupInvalid", err)
+	}
+	if _, err := loop.RestoreRuntimeMemoryBackup(payload, "replace"); err == nil || !errors.Is(err, ErrRuntimeMemoryBackupInvalid) {
+		t.Fatalf("RestoreRuntimeMemoryBackup(replace) error = %v, want ErrRuntimeMemoryBackupInvalid", err)
+	}
+	if got := NewMemoryStoreForScope(workspace, "shared").ReadLongTerm(); got != "" {
+		t.Fatalf("invalid restore wrote shared long-term memory: %q", got)
+	}
+}
+
+func TestPersistRuntimeMemoryCatalogStateBackupPreservesCachedStateOnWriteFailure(t *testing.T) {
+	workspace := t.TempDir()
+	store := getRuntimeMemoryCatalogStateStore(workspace)
+	store.replace([]runtimeMemoryCatalogEntryState{
+		{ID: "existing-entry", Pinned: true, PinnedAt: 123, PinnedBy: "launcher"},
+	})
+
+	stateFile := filepath.Join(workspace, "state", "memory", "catalog_state.json")
+	if err := os.MkdirAll(stateFile, 0o755); err != nil {
+		t.Fatalf("MkdirAll(stateFile-as-dir) error = %v", err)
+	}
+
+	err := persistRuntimeMemoryCatalogStateBackup(workspace, []runtimeMemoryCatalogEntryState{
+		{ID: "replacement-entry", Archived: true, ArchivedAt: 456, ArchivedBy: "launcher"},
+	})
+	if err == nil {
+		t.Fatal("persistRuntimeMemoryCatalogStateBackup() error = nil, want failure")
+	}
+
+	stateEntries := store.listCopies()
+	if len(stateEntries) != 1 || stateEntries[0].ID != "existing-entry" || !stateEntries[0].Pinned {
+		t.Fatalf("cached lifecycle state mutated after write failure: %#v", stateEntries)
 	}
 }
