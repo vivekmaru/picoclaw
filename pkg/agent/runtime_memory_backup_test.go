@@ -258,3 +258,56 @@ func TestPersistRuntimeMemoryCatalogStateBackupPreservesCachedStateOnWriteFailur
 		t.Fatalf("cached lifecycle state mutated after write failure: %#v", stateEntries)
 	}
 }
+
+func TestAgentLoop_RestoreRuntimeMemoryBackupReplaceValidatesAllWorkspacesBeforeWriting(t *testing.T) {
+	workspace := t.TempDir()
+	if err := NewMemoryStoreForScope(workspace, "shared").WriteLongTerm("## Shared\n\nOriginal shared memory"); err != nil {
+		t.Fatalf("WriteLongTerm(shared) error = %v", err)
+	}
+
+	registry := &AgentRegistry{
+		agents: map[string]*AgentInstance{
+			"main": {ID: "main", Workspace: workspace},
+		},
+	}
+	loop := &AgentLoop{registry: registry}
+
+	backup := RuntimeMemoryBackup{
+		Version:     runtimeMemoryBackupVersion,
+		GeneratedAt: time.Now().UnixMilli(),
+		Workspaces: []RuntimeMemoryBackupWorkspace{
+			{
+				OwnerAgentID: "main",
+				Workspace:    workspace,
+				Scopes: []RuntimeMemoryBackupScope{
+					{
+						Scope:           "shared",
+						LongTermContent: "## Shared\n\nReplacement shared memory",
+					},
+				},
+			},
+			{
+				OwnerAgentID: "missing",
+				Workspace:    filepath.Join(workspace, "missing-workspace"),
+				Scopes: []RuntimeMemoryBackupScope{
+					{
+						Scope:           "shared",
+						LongTermContent: "## Shared\n\nShould never be applied",
+					},
+				},
+			},
+		},
+	}
+	payload, err := json.Marshal(backup)
+	if err != nil {
+		t.Fatalf("Marshal(backup) error = %v", err)
+	}
+
+	if _, err := loop.RestoreRuntimeMemoryBackup(payload, "replace"); err == nil || !errors.Is(err, ErrRuntimeMemoryBackupInvalid) {
+		t.Fatalf("RestoreRuntimeMemoryBackup(replace) error = %v, want ErrRuntimeMemoryBackupInvalid", err)
+	}
+
+	if got := NewMemoryStoreForScope(workspace, "shared").ReadLongTerm(); !strings.Contains(got, "Original shared memory") {
+		t.Fatalf("replace mutated validated workspace before failing later validation: %q", got)
+	}
+}

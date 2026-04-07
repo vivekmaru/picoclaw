@@ -181,6 +181,7 @@ func (al *AgentLoop) RestoreRuntimeMemoryBackup(payload []byte, mode string) (Ru
 	}
 
 	result := RuntimeMemoryBackupRestoreResult{Mode: mode, ValidatedOnly: mode == "validate"}
+	validatedWorkspaces := make([]string, 0, len(backup.Workspaces))
 	for _, workspaceBackup := range backup.Workspaces {
 		workspace := filepath.Clean(strings.TrimSpace(workspaceBackup.Workspace))
 		if workspace == "" || !allowedWorkspaces[workspace] {
@@ -189,6 +190,7 @@ func (al *AgentLoop) RestoreRuntimeMemoryBackup(payload []byte, mode string) (Ru
 		if err := validateRuntimeMemoryBackupWorkspace(workspaceBackup); err != nil {
 			return RuntimeMemoryBackupRestoreResult{}, err
 		}
+		validatedWorkspaces = append(validatedWorkspaces, workspace)
 		result.WorkspaceCount++
 		result.ScopeCount += len(workspaceBackup.Scopes)
 		result.ProposalCount += len(workspaceBackup.Proposals)
@@ -199,8 +201,10 @@ func (al *AgentLoop) RestoreRuntimeMemoryBackup(payload []byte, mode string) (Ru
 			}
 			result.DailyNoteCount += len(scopeBackup.DailyNotes)
 		}
-		if mode == "replace" {
-			if err := restoreRuntimeMemoryBackupWorkspace(workspace, workspaceBackup); err != nil {
+	}
+	if mode == "replace" {
+		for i, workspaceBackup := range backup.Workspaces {
+			if err := restoreRuntimeMemoryBackupWorkspace(validatedWorkspaces[i], workspaceBackup); err != nil {
 				return RuntimeMemoryBackupRestoreResult{}, err
 			}
 		}
