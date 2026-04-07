@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"time"
@@ -302,16 +303,17 @@ func validateRuntimeMemoryBackupWorkspace(workspacePath string, workspace Runtim
 		if !runtimeMemoryBackupPathWithinRoot(memoryRoot, scopePath) {
 			return fmt.Errorf("%w: scope %q resolves outside memory root %q", ErrRuntimeMemoryBackupInvalid, scope.Scope, memoryRoot)
 		}
-		if existingScope, ok := scopeDestinations[scopePath]; ok {
+		scopeDestinationKey := runtimeMemoryBackupCollisionKey(scopePath)
+		if existingScope, ok := scopeDestinations[scopeDestinationKey]; ok {
 			return fmt.Errorf("%w: scopes %q and %q resolve to the same memory path %q", ErrRuntimeMemoryBackupInvalid, existingScope, scope.Scope, scopePath)
 		}
-		scopeDestinations[scopePath] = scope.Scope
+		scopeDestinations[scopeDestinationKey] = scope.Scope
 		seenNotes := make(map[string]struct{}, len(scope.DailyNotes))
 		for _, note := range scope.DailyNotes {
 			if !runtimeMemoryBackupDailyNotePathOK(note.RelativePath) {
 				return fmt.Errorf("%w: invalid daily note path %q", ErrRuntimeMemoryBackupInvalid, note.RelativePath)
 			}
-			canonicalNotePath := filepath.ToSlash(filepath.Clean(filepath.FromSlash(note.RelativePath)))
+			canonicalNotePath := runtimeMemoryBackupCollisionKey(filepath.ToSlash(filepath.Clean(filepath.FromSlash(note.RelativePath))))
 			if _, ok := seenNotes[canonicalNotePath]; ok {
 				return fmt.Errorf("%w: duplicate daily note path %q in scope %q", ErrRuntimeMemoryBackupInvalid, note.RelativePath, scope.Scope)
 			}
@@ -618,4 +620,12 @@ func runtimeMemoryBackupPathWithinRoot(root, target string) bool {
 	}
 	rel = filepath.Clean(rel)
 	return rel == "." || (!strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != "..")
+}
+
+func runtimeMemoryBackupCollisionKey(path string) string {
+	key := filepath.Clean(path)
+	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+		key = strings.ToLower(key)
+	}
+	return filepath.ToSlash(key)
 }

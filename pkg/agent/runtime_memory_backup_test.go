@@ -273,6 +273,52 @@ func TestAgentLoop_RestoreRuntimeMemoryBackupRejectsDuplicateCanonicalScopePaths
 	}
 }
 
+func TestAgentLoop_RestoreRuntimeMemoryBackupDuplicateScopeValidationMatchesFilesystemCollisionKey(t *testing.T) {
+	workspace := t.TempDir()
+	registry := &AgentRegistry{
+		agents: map[string]*AgentInstance{
+			"main": {ID: "main", Workspace: workspace},
+		},
+	}
+	loop := &AgentLoop{registry: registry}
+
+	scopeA := "team/A"
+	scopeB := "team/a"
+	pathA := filepath.Clean(runtimeMemoryBackupScopeLongTermPath(workspace, scopeA))
+	pathB := filepath.Clean(runtimeMemoryBackupScopeLongTermPath(workspace, scopeB))
+	expectDuplicate := runtimeMemoryBackupCollisionKey(pathA) == runtimeMemoryBackupCollisionKey(pathB)
+
+	backup := RuntimeMemoryBackup{
+		Version:     runtimeMemoryBackupVersion,
+		GeneratedAt: time.Now().UnixMilli(),
+		Workspaces: []RuntimeMemoryBackupWorkspace{
+			{
+				OwnerAgentID: "main",
+				Workspace:    workspace,
+				Scopes: []RuntimeMemoryBackupScope{
+					{Scope: scopeA, LongTermContent: "## Team A\n\nUpper"},
+					{Scope: scopeB, LongTermContent: "## Team A\n\nLower"},
+				},
+			},
+		},
+	}
+	payload, err := json.Marshal(backup)
+	if err != nil {
+		t.Fatalf("Marshal(backup) error = %v", err)
+	}
+
+	_, err = loop.RestoreRuntimeMemoryBackup(payload, "validate")
+	if expectDuplicate {
+		if err == nil || !errors.Is(err, ErrRuntimeMemoryBackupInvalid) {
+			t.Fatalf("RestoreRuntimeMemoryBackup(validate) error = %v, want ErrRuntimeMemoryBackupInvalid", err)
+		}
+		return
+	}
+	if err != nil {
+		t.Fatalf("RestoreRuntimeMemoryBackup(validate) unexpected error = %v", err)
+	}
+}
+
 func TestAgentLoop_RestoreRuntimeMemoryBackupRejectsScopesOutsideMemoryRoot(t *testing.T) {
 	workspace := t.TempDir()
 	registry := &AgentRegistry{
