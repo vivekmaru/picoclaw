@@ -25,6 +25,7 @@ var runtimeMemoryBackupWriteLongTerm = func(mem *MemoryStore, content string) er
 }
 
 var runtimeMemoryBackupWriteFileAtomic = fileutil.WriteFileAtomic
+var runtimeMemoryBackupRename = os.Rename
 
 type RuntimeMemoryBackup struct {
 	Version     int                            `json:"version"`
@@ -207,7 +208,7 @@ func (al *AgentLoop) RestoreRuntimeMemoryBackup(payload []byte, mode string) (Ru
 	validatedWorkspaces := make([]string, 0, len(backup.Workspaces))
 	seenWorkspaces := make(map[string]struct{}, len(backup.Workspaces))
 	for _, workspaceBackup := range backup.Workspaces {
-		workspace := filepath.Clean(strings.TrimSpace(workspaceBackup.Workspace))
+		workspace := runtimeMemoryBackupCanonicalWorkspace(workspaceBackup.Workspace)
 		if workspace == "" || !allowedWorkspaces[workspace] {
 			return RuntimeMemoryBackupRestoreResult{}, fmt.Errorf("%w: workspace %q is not part of this runtime", ErrRuntimeMemoryBackupInvalid, workspaceBackup.Workspace)
 		}
@@ -397,13 +398,15 @@ func restoreRuntimeMemoryBackupWorkspace(workspace string, backup RuntimeMemoryB
 	hadExistingRoot := false
 	if _, err := os.Stat(memoryRoot); err == nil {
 		hadExistingRoot = true
-		if err := os.Rename(memoryRoot, backupRoot); err != nil {
+		if err := runtimeMemoryBackupRename(memoryRoot, backupRoot); err != nil {
 			return runtimeMemoryBackupWorkspaceRestoreState{}, err
 		}
 	}
-	if err := os.Rename(stagedMemoryRoot, memoryRoot); err != nil {
+	if err := runtimeMemoryBackupRename(stagedMemoryRoot, memoryRoot); err != nil {
 		if hadExistingRoot {
-			_ = os.Rename(backupRoot, memoryRoot)
+			if rollbackErr := runtimeMemoryBackupRename(backupRoot, memoryRoot); rollbackErr != nil {
+				return runtimeMemoryBackupWorkspaceRestoreState{}, errors.Join(err, rollbackErr)
+			}
 		}
 		return runtimeMemoryBackupWorkspaceRestoreState{}, err
 	}
@@ -554,7 +557,7 @@ func runtimeMemoryBackupRollbackWorkspaceRestore(
 		errs = append(errs, err.Error())
 	}
 	if hadExistingRoot {
-		if err := os.Rename(backupRoot, memoryRoot); err != nil && !os.IsNotExist(err) {
+		if err := runtimeMemoryBackupRename(backupRoot, memoryRoot); err != nil && !os.IsNotExist(err) {
 			errs = append(errs, err.Error())
 		}
 	}
@@ -642,4 +645,8 @@ func runtimeMemoryBackupValidatedID(label, raw string) (string, error) {
 		return "", fmt.Errorf("%w: %s %q must not contain surrounding whitespace", ErrRuntimeMemoryBackupInvalid, label, raw)
 	}
 	return trimmed, nil
+}
+
+func runtimeMemoryBackupCanonicalWorkspace(workspace string) string {
+	return filepath.Clean(strings.TrimSpace(workspace))
 }

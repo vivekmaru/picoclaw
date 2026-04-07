@@ -103,6 +103,48 @@ func TestAgentLoop_GetRuntimeMemoryCatalog(t *testing.T) {
 	}
 }
 
+func TestAgentLoop_GetRuntimeMemoryCatalogDeduplicatesCanonicalWorkspaceAliases(t *testing.T) {
+	workspace := t.TempDir()
+	aliasWorkspace := workspace + string(filepath.Separator)
+	store := NewMemoryProposalStore(workspace)
+	proposal, err := store.Create(MemoryProposalRequest{
+		Scope:     "shared",
+		Domain:    "shared_team",
+		Target:    "long_term",
+		Kind:      "task_result",
+		EntryType: "fact",
+		Title:     "Alias workspace entry",
+		Content:   "Catalog should only report one canonical workspace.",
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if _, err := store.Approve(proposal.ID, "launcher", ""); err != nil {
+		t.Fatalf("Approve() error = %v", err)
+	}
+
+	registry := &AgentRegistry{
+		agents: map[string]*AgentInstance{
+			"main":   {ID: "main", Workspace: workspace},
+			"helper": {ID: "helper", Workspace: aliasWorkspace},
+		},
+	}
+	loop := &AgentLoop{registry: registry}
+
+	catalog := loop.GetRuntimeMemoryCatalog()
+	if catalog.Summary.WorkspaceCount != 1 {
+		t.Fatalf("WorkspaceCount = %d, want 1", catalog.Summary.WorkspaceCount)
+	}
+	if len(catalog.Scopes) == 0 {
+		t.Fatal("expected scopes in catalog")
+	}
+	for _, scope := range catalog.Scopes {
+		if scope.Workspace != filepath.Clean(workspace) {
+			t.Fatalf("scope.Workspace = %q, want %q", scope.Workspace, filepath.Clean(workspace))
+		}
+	}
+}
+
 func TestAgentLoop_MemoryCatalogLifecycleActions(t *testing.T) {
 	workspace := t.TempDir()
 	store := NewMemoryProposalStore(workspace)

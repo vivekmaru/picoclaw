@@ -263,7 +263,7 @@ func runtimeMemoryCatalogWorkspaces(registry *AgentRegistry) []runtimeMemoryWork
 		if !ok || agentInst == nil {
 			continue
 		}
-		workspace := strings.TrimSpace(agentInst.Workspace)
+		workspace := runtimeMemoryBackupCanonicalWorkspace(agentInst.Workspace)
 		if workspace == "" || seen[workspace] {
 			continue
 		}
@@ -300,7 +300,7 @@ func runtimeMemoryCatalogScopesForWorkspace(registry *AgentRegistry, ref runtime
 		if !ok || agentInst == nil {
 			continue
 		}
-		if strings.TrimSpace(agentInst.Workspace) != ref.Workspace {
+		if runtimeMemoryBackupCanonicalWorkspace(agentInst.Workspace) != ref.Workspace {
 			continue
 		}
 		addScope(teammate.MemoryScope)

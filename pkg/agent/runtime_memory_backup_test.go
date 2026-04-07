@@ -93,6 +93,45 @@ func TestAgentLoop_GetRuntimeMemoryBackup(t *testing.T) {
 	}
 }
 
+func TestAgentLoop_GetRuntimeMemoryBackupDeduplicatesCanonicalWorkspaceAliases(t *testing.T) {
+	workspace := t.TempDir()
+	aliasWorkspace := workspace + string(filepath.Separator)
+	shared := NewMemoryStoreForScope(workspace, "shared")
+	if err := shared.WriteLongTerm("## Shared\n\nAlias-safe memory body"); err != nil {
+		t.Fatalf("WriteLongTerm(shared) error = %v", err)
+	}
+
+	registry := &AgentRegistry{
+		agents: map[string]*AgentInstance{
+			"main":   {ID: "main", Workspace: workspace},
+			"helper": {ID: "helper", Workspace: aliasWorkspace},
+		},
+	}
+	loop := &AgentLoop{registry: registry}
+
+	backup, err := loop.GetRuntimeMemoryBackup()
+	if err != nil {
+		t.Fatalf("GetRuntimeMemoryBackup() error = %v", err)
+	}
+	if backup.Summary.WorkspaceCount != 1 {
+		t.Fatalf("WorkspaceCount = %d, want 1", backup.Summary.WorkspaceCount)
+	}
+	if len(backup.Workspaces) != 1 {
+		t.Fatalf("len(Workspaces) = %d, want 1", len(backup.Workspaces))
+	}
+	if backup.Workspaces[0].Workspace != filepath.Clean(workspace) {
+		t.Fatalf("Workspace = %q, want %q", backup.Workspaces[0].Workspace, filepath.Clean(workspace))
+	}
+
+	payload, err := json.Marshal(backup)
+	if err != nil {
+		t.Fatalf("Marshal(backup) error = %v", err)
+	}
+	if _, err := loop.RestoreRuntimeMemoryBackup(payload, "validate"); err != nil {
+		t.Fatalf("RestoreRuntimeMemoryBackup(validate) error = %v", err)
+	}
+}
+
 func TestAgentLoop_RestoreRuntimeMemoryBackup(t *testing.T) {
 	workspace := t.TempDir()
 	registry := &AgentRegistry{
@@ -717,6 +756,65 @@ func TestAgentLoop_RestoreRuntimeMemoryBackupReplacePreservesExistingMemoryOnWri
 	}
 	if got := shared.ReadLongTerm(); !strings.Contains(got, "Original shared memory") {
 		t.Fatalf("write failure replaced existing shared memory: %q", got)
+	}
+}
+
+func TestAgentLoop_RestoreRuntimeMemoryBackupReportsSwapBackRenameFailure(t *testing.T) {
+	workspace := t.TempDir()
+	shared := NewMemoryStoreForScope(workspace, "shared")
+	if err := shared.WriteLongTerm("## Shared\n\nOriginal shared memory"); err != nil {
+		t.Fatalf("WriteLongTerm(shared) error = %v", err)
+	}
+
+	registry := &AgentRegistry{
+		agents: map[string]*AgentInstance{
+			"main": {ID: "main", Workspace: workspace},
+		},
+	}
+	loop := &AgentLoop{registry: registry}
+
+	originalRename := runtimeMemoryBackupRename
+	runtimeMemoryBackupRename = func(oldPath, newPath string) error {
+		switch {
+		case filepath.Base(oldPath) == "memory" && filepath.Base(filepath.Dir(oldPath)) == "workspace" && filepath.Clean(newPath) == filepath.Clean(filepath.Join(workspace, "memory")):
+			return errors.New("simulated swap failure")
+		case strings.HasPrefix(filepath.Base(oldPath), ".memory-backup-") && filepath.Clean(newPath) == filepath.Clean(filepath.Join(workspace, "memory")):
+			return errors.New("simulated swap-back failure")
+		default:
+			return originalRename(oldPath, newPath)
+		}
+	}
+	defer func() {
+		runtimeMemoryBackupRename = originalRename
+	}()
+
+	backup := RuntimeMemoryBackup{
+		Version:     runtimeMemoryBackupVersion,
+		GeneratedAt: time.Now().UnixMilli(),
+		Workspaces: []RuntimeMemoryBackupWorkspace{
+			{
+				OwnerAgentID: "main",
+				Workspace:    workspace,
+				Scopes: []RuntimeMemoryBackupScope{
+					{
+						Scope:           "shared",
+						LongTermContent: "## Shared\n\nReplacement shared memory",
+					},
+				},
+			},
+		},
+	}
+	payload, err := json.Marshal(backup)
+	if err != nil {
+		t.Fatalf("Marshal(backup) error = %v", err)
+	}
+
+	_, err = loop.RestoreRuntimeMemoryBackup(payload, "replace")
+	if err == nil {
+		t.Fatal("RestoreRuntimeMemoryBackup(replace) error = nil, want combined rename failure")
+	}
+	if !strings.Contains(err.Error(), "simulated swap failure") || !strings.Contains(err.Error(), "simulated swap-back failure") {
+		t.Fatalf("combined error = %v, want both swap and swap-back failures", err)
 	}
 }
 
