@@ -19,6 +19,12 @@ var ErrRuntimeMemoryBackupUnsupportedMode = errors.New("runtime memory backup mo
 
 const runtimeMemoryBackupVersion = 1
 
+var runtimeMemoryBackupWriteLongTerm = func(mem *MemoryStore, content string) error {
+	return mem.WriteLongTerm(content)
+}
+
+var runtimeMemoryBackupWriteFileAtomic = fileutil.WriteFileAtomic
+
 type RuntimeMemoryBackup struct {
 	Version     int                            `json:"version"`
 	GeneratedAt int64                          `json:"generated_at"`
@@ -252,10 +258,17 @@ func runtimeMemoryBackupScopeFromStore(mem *MemoryStore) (RuntimeMemoryBackupSco
 }
 
 func validateRuntimeMemoryBackupWorkspace(workspace RuntimeMemoryBackupWorkspace) error {
+	scopeDestinations := make(map[string]string)
 	for _, scope := range workspace.Scopes {
 		if strings.TrimSpace(scope.Scope) == "" {
 			return fmt.Errorf("%w: backup scope is required", ErrRuntimeMemoryBackupInvalid)
 		}
+		scopeStore := NewMemoryStoreForScope(workspace.Workspace, scope.Scope)
+		scopePath := filepath.Clean(scopeStore.LongTermPath())
+		if existingScope, ok := scopeDestinations[scopePath]; ok {
+			return fmt.Errorf("%w: scopes %q and %q resolve to the same memory path %q", ErrRuntimeMemoryBackupInvalid, existingScope, scope.Scope, scopePath)
+		}
+		scopeDestinations[scopePath] = scope.Scope
 		for _, note := range scope.DailyNotes {
 			if !runtimeMemoryBackupDailyNotePathOK(note.RelativePath) {
 				return fmt.Errorf("%w: invalid daily note path %q", ErrRuntimeMemoryBackupInvalid, note.RelativePath)
@@ -267,12 +280,20 @@ func validateRuntimeMemoryBackupWorkspace(workspace RuntimeMemoryBackupWorkspace
 
 func restoreRuntimeMemoryBackupWorkspace(workspace string, backup RuntimeMemoryBackupWorkspace) error {
 	memoryRoot := filepath.Join(workspace, "memory")
-	if err := os.RemoveAll(memoryRoot); err != nil {
+	stagingRoot, err := os.MkdirTemp(workspace, ".memory-restore-*")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(stagingRoot)
+
+	stagingWorkspace := filepath.Join(stagingRoot, "workspace")
+	stagedMemoryRoot := filepath.Join(stagingWorkspace, "memory")
+	if err := os.MkdirAll(stagedMemoryRoot, 0o755); err != nil {
 		return err
 	}
 	for _, scopeBackup := range backup.Scopes {
-		mem := NewMemoryStoreForScope(workspace, scopeBackup.Scope)
-		if err := mem.WriteLongTerm(scopeBackup.LongTermContent); err != nil {
+		mem := NewMemoryStoreForScope(stagingWorkspace, scopeBackup.Scope)
+		if err := runtimeMemoryBackupWriteLongTerm(mem, scopeBackup.LongTermContent); err != nil {
 			return err
 		}
 		for _, note := range scopeBackup.DailyNotes {
@@ -284,9 +305,28 @@ func restoreRuntimeMemoryBackupWorkspace(workspace string, backup RuntimeMemoryB
 			if err := os.MkdirAll(filepath.Dir(notePath), 0o755); err != nil {
 				return err
 			}
-			if err := fileutil.WriteFileAtomic(notePath, []byte(note.Content), 0o600); err != nil {
+			if err := runtimeMemoryBackupWriteFileAtomic(notePath, []byte(note.Content), 0o600); err != nil {
 				return err
 			}
+		}
+	}
+	backupRoot := filepath.Join(workspace, fmt.Sprintf(".memory-backup-%d", time.Now().UnixNano()))
+	hadExistingRoot := false
+	if _, err := os.Stat(memoryRoot); err == nil {
+		hadExistingRoot = true
+		if err := os.Rename(memoryRoot, backupRoot); err != nil {
+			return err
+		}
+	}
+	if err := os.Rename(stagedMemoryRoot, memoryRoot); err != nil {
+		if hadExistingRoot {
+			_ = os.Rename(backupRoot, memoryRoot)
+		}
+		return err
+	}
+	if hadExistingRoot {
+		if err := os.RemoveAll(backupRoot); err != nil {
+			return err
 		}
 	}
 
@@ -315,7 +355,7 @@ func persistRuntimeMemoryProposalBackup(workspace string, proposals []MemoryProp
 	if err != nil {
 		return err
 	}
-	return fileutil.WriteFileAtomic(storeFile, payload, 0o600)
+	return runtimeMemoryBackupWriteFileAtomic(storeFile, payload, 0o600)
 }
 
 func persistRuntimeMemoryCatalogStateBackup(workspace string, entries []runtimeMemoryCatalogEntryState) error {
@@ -327,7 +367,7 @@ func persistRuntimeMemoryCatalogStateBackup(workspace string, entries []runtimeM
 	if err != nil {
 		return err
 	}
-	if err := fileutil.WriteFileAtomic(stateFile, payload, 0o600); err != nil {
+	if err := runtimeMemoryBackupWriteFileAtomic(stateFile, payload, 0o600); err != nil {
 		return err
 	}
 	store := getRuntimeMemoryCatalogStateStore(workspace)
