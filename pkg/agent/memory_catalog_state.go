@@ -69,6 +69,37 @@ func (s *runtimeMemoryCatalogStateStore) getCopy(id string) (runtimeMemoryCatalo
 	return *entry, true
 }
 
+func (s *runtimeMemoryCatalogStateStore) listCopies() []runtimeMemoryCatalogEntryState {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	entries := make([]runtimeMemoryCatalogEntryState, 0, len(s.entries))
+	for _, entry := range s.entries {
+		if entry == nil || strings.TrimSpace(entry.ID) == "" {
+			continue
+		}
+		entries = append(entries, *entry)
+	}
+	slices.SortFunc(entries, func(a, b runtimeMemoryCatalogEntryState) int {
+		return strings.Compare(a.ID, b.ID)
+	})
+	return entries
+}
+
+func (s *runtimeMemoryCatalogStateStore) replace(entries []runtimeMemoryCatalogEntryState) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.entries = make(map[string]*runtimeMemoryCatalogEntryState, len(entries))
+	for i := range entries {
+		entry := entries[i]
+		if strings.TrimSpace(entry.ID) == "" {
+			continue
+		}
+		entryCopy := entry
+		s.entries[entry.ID] = &entryCopy
+	}
+	s.loadErr = nil
+}
+
 func (s *runtimeMemoryCatalogStateStore) apply(entry *RuntimeMemoryEntryInfo) {
 	if s == nil || entry == nil {
 		return

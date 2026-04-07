@@ -33,6 +33,8 @@ func (h *Handler) registerAgentRuntimeRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/agent/runtime", h.handleAgentRuntime)
 	mux.HandleFunc("GET /api/agent/runtime/memory-catalog", h.handleAgentRuntimeMemoryCatalog)
 	mux.HandleFunc("GET /api/agent/runtime/memory-catalog/export", h.handleExportAgentRuntimeMemoryCatalog)
+	mux.HandleFunc("GET /api/agent/runtime/memory-backup/export", h.handleExportAgentRuntimeMemoryBackup)
+	mux.HandleFunc("POST /api/agent/runtime/memory-backup/restore", h.handleRestoreAgentRuntimeMemoryBackup)
 	mux.HandleFunc("POST /api/agent/runtime/memory-catalog/entries/{entryID}/pin", h.handlePinAgentRuntimeMemoryCatalogEntry)
 	mux.HandleFunc("POST /api/agent/runtime/memory-catalog/entries/{entryID}/unpin", h.handleUnpinAgentRuntimeMemoryCatalogEntry)
 	mux.HandleFunc("POST /api/agent/runtime/memory-catalog/entries/{entryID}/archive", h.handleArchiveAgentRuntimeMemoryCatalogEntry)
@@ -85,6 +87,40 @@ func (h *Handler) handleExportAgentRuntimeMemoryCatalog(w http.ResponseWriter, r
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
 	_, _ = w.Write(payload)
+}
+
+func (h *Handler) handleExportAgentRuntimeMemoryBackup(w http.ResponseWriter, r *http.Request) {
+	format := r.URL.Query().Get("format")
+	payload, contentType, filename, statusCode, err := h.exportGatewayRuntimeMemoryBackup(format, gatewayRuntimeRequestTimeout)
+	if err != nil {
+		http.Error(w, err.Error(), statusCode)
+		return
+	}
+
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
+	_, _ = w.Write(payload)
+}
+
+func (h *Handler) handleRestoreAgentRuntimeMemoryBackup(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Mode   string          `json:"mode"`
+		Backup json.RawMessage `json:"backup"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	result, statusCode, err := h.restoreGatewayRuntimeMemoryBackup(req.Mode, req.Backup, gatewayRuntimeRequestTimeout)
+	if err != nil {
+		http.Error(w, err.Error(), statusCode)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(result); err != nil {
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+	}
 }
 
 func (h *Handler) handlePinAgentRuntimeMemoryCatalogEntry(w http.ResponseWriter, r *http.Request) {
@@ -646,6 +682,58 @@ func (h *Handler) exportGatewayRuntimeMemoryCatalog(format string, timeout time.
 		}
 	}
 	return payload, contentType, filename, http.StatusOK, nil
+}
+
+func (h *Handler) exportGatewayRuntimeMemoryBackup(format string, timeout time.Duration) ([]byte, string, string, int, error) {
+	path := "/runtime/agent/memory-backup/export"
+	if strings.TrimSpace(format) != "" {
+		path += "?format=" + url.QueryEscape(format)
+	}
+	resp, statusCode, err := h.doGatewayRuntimeRequest(http.MethodGet, path, nil, timeout)
+	if err != nil {
+		return nil, "", "", statusCode, err
+	}
+	defer resp.Body.Close()
+
+	payload, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, "", "", http.StatusBadGateway, err
+	}
+	contentType := strings.TrimSpace(resp.Header.Get("Content-Type"))
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	filename := parseDownloadFilename(resp.Header.Get("Content-Disposition"))
+	if filename == "" {
+		filename = "memory-backup.json"
+	}
+	return payload, contentType, filename, http.StatusOK, nil
+}
+
+func (h *Handler) restoreGatewayRuntimeMemoryBackup(mode string, backup json.RawMessage, timeout time.Duration) (*agent.RuntimeMemoryBackupRestoreResult, int, error) {
+	payload, err := json.Marshal(map[string]any{
+		"mode":   mode,
+		"backup": backup,
+	})
+	if err != nil {
+		return nil, http.StatusInternalServerError, err
+	}
+	resp, statusCode, err := h.doGatewayRuntimeRequest(
+		http.MethodPost,
+		"/runtime/agent/memory-backup/restore",
+		bytes.NewReader(payload),
+		timeout,
+	)
+	if err != nil {
+		return nil, statusCode, err
+	}
+	defer resp.Body.Close()
+
+	var result agent.RuntimeMemoryBackupRestoreResult
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, http.StatusBadGateway, err
+	}
+	return &result, http.StatusOK, nil
 }
 
 func (h *Handler) doGatewayRuntimeRequest(

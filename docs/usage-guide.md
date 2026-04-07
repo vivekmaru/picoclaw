@@ -63,6 +63,8 @@ Use `picoclaw gateway` when you want:
 - use the same launcher page to browse approved memory across shared and
   teammate scopes, then pin important entries, archive stale ones, or export
   the catalog when you want a backup or an audit snapshot
+- use the runtime memory backup endpoints when you want a restorable snapshot
+  of workspace memory state, not just a human-readable catalog export
 - add skills or MCP servers after the base flow works
 
 ### Remote Or Headless Gateway
@@ -92,6 +94,8 @@ Before calling a deployment ready, verify:
 - one tested ingress path
 - workspace permissions and storage location
 - backup strategy for config, `.security.yml`, and workspace state
+- validate memory backups before restore, then use `replace` restores only when
+  you intend to overwrite the included workspace memory state
 - explicit review of exec, MCP, and CLI-provider trust boundaries
 - launcher token strategy if the web UI is enabled
 
