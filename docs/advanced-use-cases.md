@@ -13,6 +13,9 @@ tools". A practical deployment shape is:
 - launcher review surfaces for tasks, approvals, memory proposals, approved
   memory catalog browsing, and task handoffs
 
+For the current recommended operating pattern, see
+[Operator And Teammate Workflows](operator-teammate-workflows.md).
+
 This is a good fit when you want PicoClaw to coordinate Claude Code, Codex, or
 other local coding tools without turning them into an unconstrained autonomous
 runtime.

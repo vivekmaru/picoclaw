@@ -58,12 +58,16 @@ Use `picoclaw gateway` when you want:
 - run `picoclaw-launcher`
 - add one model
 - use the built-in Pico chat page
+- define a small teammate set with clear roles before enabling more tools
 - use the `Teammates` page to review delegated tasks, approve risky work, and
   hand off completed tasks to another teammate for follow-up or review
 - use the same launcher page to browse approved memory across shared and
   teammate scopes, then pin important entries, archive stale ones, or export
   the catalog when you want a backup or an audit snapshot
 - add skills or MCP servers after the base flow works
+
+See [Operator And Teammate Workflows](operator-teammate-workflows.md) for the
+recommended day-to-day review and handoff pattern.
 
 ### Remote Or Headless Gateway
 
@@ -98,6 +102,7 @@ Before calling a deployment ready, verify:
 ## Where To Go Next
 
 - [Architecture](architecture.md)
+- [Operator And Teammate Workflows](operator-teammate-workflows.md)
 - [Advanced Use Cases](advanced-use-cases.md)
 - [Providers & Models](providers.md)
 - [Tools Configuration](tools_configuration.md)

@@ -1064,7 +1064,7 @@ func (al *AgentLoop) logEvent(evt Event) {
 		fields["error"] = payload.Message
 	}
 
-	logger.InfoCF("eventbus", fmt.Sprintf("Agent event: %s", evt.Kind.String()), fields)
+	logger.DebugCF("eventbus", fmt.Sprintf("Agent event: %s", evt.Kind.String()), fields)
 }
 
 func (al *AgentLoop) RegisterTool(tool tools.Tool) {
@@ -1451,7 +1451,7 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 	} else {
 		logContent = utils.Truncate(msg.Content, 80)
 	}
-	logger.InfoCF(
+	logger.DebugCF(
 		"agent",
 		fmt.Sprintf("Processing message from %s:%s: %s", msg.Channel, msg.SenderID, logContent),
 		map[string]any{
@@ -1492,7 +1492,7 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 	scopeKey := resolveScopeKey(route, msg.SessionKey)
 	sessionKey := scopeKey
 
-	logger.InfoCF("agent", "Routed message",
+	logger.DebugCF("agent", "Routed message",
 		map[string]any{
 			"agent_id":      agent.ID,
 			"scope_key":     scopeKey,
@@ -1525,7 +1525,7 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 
 	if pending := al.takePendingSkills(opts.SessionKey); len(pending) > 0 {
 		opts.ForcedSkills = append(opts.ForcedSkills, pending...)
-		logger.InfoCF("agent", "Applying pending skill override",
+		logger.DebugCF("agent", "Applying pending skill override",
 			map[string]any{
 				"session_key": opts.SessionKey,
 				"skills":      strings.Join(pending, ","),
@@ -1601,7 +1601,7 @@ func (al *AgentLoop) processSystemMessage(
 		)
 	}
 
-	logger.InfoCF("agent", "Processing system message",
+	logger.DebugCF("agent", "Processing system message",
 		map[string]any{
 			"sender_id": msg.SenderID,
 			"chat_id":   msg.ChatID,
@@ -1626,7 +1626,7 @@ func (al *AgentLoop) processSystemMessage(
 
 	// Skip internal channels - only log, don't send to user
 	if constants.IsInternalChannel(originChannel) {
-		logger.InfoCF("agent", "Subagent completed (internal channel)",
+		logger.DebugCF("agent", "Subagent completed (internal channel)",
 			map[string]any{
 				"sender_id":   msg.SenderID,
 				"content_len": len(content),
@@ -1703,7 +1703,7 @@ func (al *AgentLoop) runAgentLoop(
 
 	if result.finalContent != "" {
 		responsePreview := utils.Truncate(result.finalContent, 120)
-		logger.InfoCF("agent", fmt.Sprintf("Response: %s", responsePreview),
+		logger.DebugCF("agent", fmt.Sprintf("Response: %s", responsePreview),
 			map[string]any{
 				"agent_id":     agent.ID,
 				"session_key":  opts.SessionKey,
@@ -2372,7 +2372,7 @@ turnLoop:
 				continue
 			}
 			finalContent = responseContent
-			logger.InfoCF("agent", "LLM response without tool calls (direct answer)",
+			logger.DebugCF("agent", "LLM response without tool calls (direct answer)",
 				map[string]any{
 					"agent_id":      ts.agent.ID,
 					"iteration":     iteration,
@@ -2390,7 +2390,7 @@ turnLoop:
 		for _, tc := range normalizedToolCalls {
 			toolNames = append(toolNames, tc.Name)
 		}
-		logger.InfoCF("agent", "LLM requested tool calls",
+		logger.DebugCF("agent", "LLM requested tool calls",
 			map[string]any{
 				"agent_id":  ts.agent.ID,
 				"tools":     toolNames,
@@ -2552,7 +2552,7 @@ turnLoop:
 
 			argsJSON, _ := json.Marshal(toolArgs)
 			argsPreview := utils.Truncate(string(argsJSON), 200)
-			logger.InfoCF("agent", fmt.Sprintf("Tool call: %s(%s)", toolName, argsPreview),
+			logger.DebugCF("agent", fmt.Sprintf("Tool call: %s(%s)", toolName, argsPreview),
 				map[string]any{
 					"agent_id":  ts.agent.ID,
 					"tool":      toolName,

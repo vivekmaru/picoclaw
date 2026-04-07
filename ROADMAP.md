@@ -90,6 +90,34 @@
   * **AI-Assisted Docs**: Using AI to auto-generate API references and code comments (with human verification to prevent hallucinations).
 
 
+## 🧭 5.1 Phase 2 Polish Backlog
+
+*The teammate runtime is now real. This backlog tracks follow-up work that is
+valuable, but no longer blocks the shift into the memory-product and operator
+cockpit phases.*
+
+* **Approval Inbox Polish**
+  * Separate high-signal task and memory approvals from the raw runtime feed.
+  * Add richer reviewer history, filters, and clearer approval state transitions.
+
+* **Teammate Workflow Depth**
+  * Improve `coder -> reviewer -> operator -> memory_keeper` chains.
+  * Add clearer ownership, handoff intent, and resume/retry ergonomics.
+
+* **Launcher Workflow UX**
+  * Make the teammate runtime page feel more like an operator workbench than a
+    debug/status screen.
+  * Improve task detail views, handoff navigation, and memory review ergonomics.
+
+* **Runtime Persistence Hardening**
+  * Expand restart and migration coverage around persisted task/review state.
+  * Keep approval, handoff, and memory-review data durable and easy to inspect.
+
+* **Operator/Teammate Documentation**
+  * Keep the workflow guide current as the launcher review surfaces evolve.
+  * Tighten practical guidance for private home-lab and coding-assistant setups.
+
+
 
 ## 🤖 6. Engineering: AI-Powered Open Source
 
