@@ -318,6 +318,28 @@ func validateRuntimeMemoryBackupWorkspace(workspacePath string, workspace Runtim
 			seenNotes[canonicalNotePath] = struct{}{}
 		}
 	}
+	seenProposalIDs := make(map[string]struct{}, len(workspace.Proposals))
+	for _, proposal := range workspace.Proposals {
+		id := strings.TrimSpace(proposal.ID)
+		if id == "" {
+			return fmt.Errorf("%w: memory proposal ID is required", ErrRuntimeMemoryBackupInvalid)
+		}
+		if _, ok := seenProposalIDs[id]; ok {
+			return fmt.Errorf("%w: duplicate memory proposal ID %q", ErrRuntimeMemoryBackupInvalid, id)
+		}
+		seenProposalIDs[id] = struct{}{}
+	}
+	seenLifecycleIDs := make(map[string]struct{}, len(workspace.LifecycleEntries))
+	for _, entry := range workspace.LifecycleEntries {
+		id := strings.TrimSpace(entry.ID)
+		if id == "" {
+			return fmt.Errorf("%w: runtime memory catalog entry ID is required", ErrRuntimeMemoryBackupInvalid)
+		}
+		if _, ok := seenLifecycleIDs[id]; ok {
+			return fmt.Errorf("%w: duplicate runtime memory catalog entry ID %q", ErrRuntimeMemoryBackupInvalid, id)
+		}
+		seenLifecycleIDs[id] = struct{}{}
+	}
 	return nil
 }
 
@@ -385,13 +407,13 @@ func restoreRuntimeMemoryBackupWorkspace(workspace string, backup RuntimeMemoryB
 	}
 
 	if err := persistRuntimeMemoryProposalBackup(workspace, backup.Proposals); err != nil {
-		if rollbackErr := runtimeMemoryBackupRollbackWorkspaceRestore(memoryRoot, backupRoot, hadExistingRoot, proposalSnapshot, catalogSnapshot); rollbackErr != nil {
+		if rollbackErr := runtimeMemoryBackupRollbackWorkspaceRestore(workspace, memoryRoot, backupRoot, hadExistingRoot, proposalSnapshot, catalogSnapshot); rollbackErr != nil {
 			return runtimeMemoryBackupWorkspaceRestoreState{}, errors.Join(err, rollbackErr)
 		}
 		return runtimeMemoryBackupWorkspaceRestoreState{}, err
 	}
 	if err := persistRuntimeMemoryCatalogStateBackup(workspace, backup.LifecycleEntries); err != nil {
-		if rollbackErr := runtimeMemoryBackupRollbackWorkspaceRestore(memoryRoot, backupRoot, hadExistingRoot, proposalSnapshot, catalogSnapshot); rollbackErr != nil {
+		if rollbackErr := runtimeMemoryBackupRollbackWorkspaceRestore(workspace, memoryRoot, backupRoot, hadExistingRoot, proposalSnapshot, catalogSnapshot); rollbackErr != nil {
 			return runtimeMemoryBackupWorkspaceRestoreState{}, errors.Join(err, rollbackErr)
 		}
 		return runtimeMemoryBackupWorkspaceRestoreState{}, err
@@ -517,6 +539,7 @@ func runtimeMemoryBackupRestoreFile(snapshot runtimeMemoryBackupFileSnapshot) er
 }
 
 func runtimeMemoryBackupRollbackWorkspaceRestore(
+	workspace string,
 	memoryRoot, backupRoot string,
 	hadExistingRoot bool,
 	proposalSnapshot, catalogSnapshot runtimeMemoryBackupFileSnapshot,
@@ -535,6 +558,8 @@ func runtimeMemoryBackupRollbackWorkspaceRestore(
 	}
 	if err := runtimeMemoryBackupRestoreFile(catalogSnapshot); err != nil {
 		errs = append(errs, err.Error())
+	} else if err := runtimeMemoryBackupRestoreCatalogStateStore(workspace, catalogSnapshot); err != nil {
+		errs = append(errs, err.Error())
 	}
 	if len(errs) > 0 {
 		return fmt.Errorf("rollback runtime memory backup restore: %s", strings.Join(errs, "; "))
@@ -544,6 +569,7 @@ func runtimeMemoryBackupRollbackWorkspaceRestore(
 
 func runtimeMemoryBackupRollbackWorkspaceRestoreState(state runtimeMemoryBackupWorkspaceRestoreState) error {
 	return runtimeMemoryBackupRollbackWorkspaceRestore(
+		filepath.Dir(state.memoryRoot),
 		state.memoryRoot,
 		state.backupRoot,
 		state.hadExistingRoot,
@@ -559,6 +585,23 @@ func runtimeMemoryBackupFinalizeWorkspaceRestore(state runtimeMemoryBackupWorksp
 	if err := os.RemoveAll(state.backupRoot); err != nil {
 		return err
 	}
+	return nil
+}
+
+func runtimeMemoryBackupRestoreCatalogStateStore(workspace string, snapshot runtimeMemoryBackupFileSnapshot) error {
+	store := getRuntimeMemoryCatalogStateStore(workspace)
+	if !snapshot.exists {
+		store.replace(nil)
+		return nil
+	}
+	var payload runtimeMemoryCatalogStateFile
+	if err := json.Unmarshal(snapshot.data, &payload); err != nil {
+		return err
+	}
+	if payload.Version != 0 && payload.Version != runtimeMemoryCatalogStateVersion {
+		return fmt.Errorf("unsupported memory catalog state version: got %d, want %d", payload.Version, runtimeMemoryCatalogStateVersion)
+	}
+	store.replace(payload.Entries)
 	return nil
 }
 

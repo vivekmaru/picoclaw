@@ -18,6 +18,7 @@ import (
 )
 
 const gatewayRuntimeRequestTimeout = 3 * time.Second
+const gatewayRuntimeMemoryRestoreTimeout = 30 * time.Second
 
 var (
 	readGatewayPIDDataForRuntime = func() *ppid.PidFileData {
@@ -111,7 +112,7 @@ func (h *Handler) handleRestoreAgentRuntimeMemoryBackup(w http.ResponseWriter, r
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
-	result, statusCode, err := h.restoreGatewayRuntimeMemoryBackup(req.Mode, req.Backup, gatewayRuntimeRequestTimeout)
+	result, statusCode, err := h.restoreGatewayRuntimeMemoryBackup(req.Mode, req.Backup, gatewayRuntimeMemoryRestoreTimeout)
 	if err != nil {
 		http.Error(w, err.Error(), statusCode)
 		return

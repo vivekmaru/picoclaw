@@ -236,6 +236,9 @@ func TestHandleRestoreAgentRuntimeMemoryBackup_ProxySuccess(t *testing.T) {
 		return &ppid.PidFileData{PID: 123, Host: "127.0.0.1", Port: 18790, Token: "pid-secret"}
 	}
 	gatewayRuntimeDo = func(req *http.Request, timeout time.Duration) (*http.Response, error) {
+		if timeout != gatewayRuntimeMemoryRestoreTimeout {
+			t.Fatalf("timeout = %v, want %v", timeout, gatewayRuntimeMemoryRestoreTimeout)
+		}
 		if req.Method != http.MethodPost {
 			t.Fatalf("Method = %s, want POST", req.Method)
 		}
