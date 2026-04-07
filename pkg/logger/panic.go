@@ -38,7 +38,6 @@ func InitPanic(filePath string) (func(), error) {
 
 func RecoverPanicNoExit(err any) {
 	if panicWriter == nil {
-		Errorf("panicWriter is nil, should not happen")
 		return
 	}
 	now := time.Now().Format("2006-01-02 15:04:05")

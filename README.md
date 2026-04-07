@@ -67,6 +67,9 @@ PicoClaw is best understood as:
 This means the project is now broader than a tiny single-agent assistant, but
 still much lighter than most agent platforms.
 
+If you want the shortest practical guide to using that model safely today,
+start with [docs/operator-teammate-workflows.md](docs/operator-teammate-workflows.md).
+
 ## 📢 News
 
 2026-03-31 📱 **Android Support!** PicoClaw now runs on Android! Download the APK at [picoclaw.io](https://picoclaw.io/download)

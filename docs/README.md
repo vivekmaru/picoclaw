@@ -14,6 +14,8 @@ to a modest SBC, mini PC, or VM.
 - [Architecture](architecture.md): runtime components, request flow, and trust
   boundaries.
 - [Usage Guide](usage-guide.md): recommended setup and day-to-day workflows.
+- [Operator And Teammate Workflows](operator-teammate-workflows.md): the
+  practical supervised workflow for tasks, approvals, handoffs, and memory.
 - [Advanced Use Cases](advanced-use-cases.md): multi-agent routing, cron,
   teammate workflows, MCP, and private operator patterns.
 - [Configuration](configuration.md): config layout, workspace structure, and
@@ -46,6 +48,8 @@ to a modest SBC, mini PC, or VM.
 
 - [Spawn Tasks](spawn-tasks.md): asynchronous delegation, approvals, and task
   handoff chains.
+- [Operator And Teammate Workflows](operator-teammate-workflows.md): how to run
+  the launcher as a supervised operator cockpit today.
 - [Usage Guide](usage-guide.md): launcher memory review plus approved-memory
   catalog browsing/export workflows.
 - [Cron](cron.md): scheduled tasks and command jobs.
