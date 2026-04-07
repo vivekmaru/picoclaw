@@ -72,6 +72,14 @@ type RuntimeMemoryBackupRestoreResult struct {
 	LifecycleEntryCount int    `json:"lifecycle_entry_count"`
 }
 
+type runtimeMemoryBackupFileSnapshot struct {
+	path    string
+	data    []byte
+	exists  bool
+	perm    os.FileMode
+	dirPerm os.FileMode
+}
+
 func (al *AgentLoop) ExportRuntimeMemoryBackup(format string) ([]byte, string, string, error) {
 	format = strings.ToLower(strings.TrimSpace(format))
 	if format == "" {
@@ -280,6 +288,16 @@ func validateRuntimeMemoryBackupWorkspace(workspace RuntimeMemoryBackupWorkspace
 
 func restoreRuntimeMemoryBackupWorkspace(workspace string, backup RuntimeMemoryBackupWorkspace) error {
 	memoryRoot := filepath.Join(workspace, "memory")
+	proposalStateFile := filepath.Join(workspace, "state", "memory", "proposals.json")
+	catalogStateFile := filepath.Join(workspace, "state", "memory", "catalog_state.json")
+	proposalSnapshot, err := runtimeMemoryBackupCaptureFile(proposalStateFile)
+	if err != nil {
+		return err
+	}
+	catalogSnapshot, err := runtimeMemoryBackupCaptureFile(catalogStateFile)
+	if err != nil {
+		return err
+	}
 	stagingRoot, err := os.MkdirTemp(workspace, ".memory-restore-*")
 	if err != nil {
 		return err
@@ -324,17 +342,19 @@ func restoreRuntimeMemoryBackupWorkspace(workspace string, backup RuntimeMemoryB
 		}
 		return err
 	}
+
+	if err := persistRuntimeMemoryProposalBackup(workspace, backup.Proposals); err != nil {
+		_ = runtimeMemoryBackupRollbackWorkspaceRestore(memoryRoot, backupRoot, hadExistingRoot, proposalSnapshot, catalogSnapshot)
+		return err
+	}
+	if err := persistRuntimeMemoryCatalogStateBackup(workspace, backup.LifecycleEntries); err != nil {
+		_ = runtimeMemoryBackupRollbackWorkspaceRestore(memoryRoot, backupRoot, hadExistingRoot, proposalSnapshot, catalogSnapshot)
+		return err
+	}
 	if hadExistingRoot {
 		if err := os.RemoveAll(backupRoot); err != nil {
 			return err
 		}
-	}
-
-	if err := persistRuntimeMemoryProposalBackup(workspace, backup.Proposals); err != nil {
-		return err
-	}
-	if err := persistRuntimeMemoryCatalogStateBackup(workspace, backup.LifecycleEntries); err != nil {
-		return err
 	}
 	return nil
 }
@@ -410,4 +430,68 @@ func allDigits(value string) bool {
 		}
 	}
 	return value != ""
+}
+
+func runtimeMemoryBackupCaptureFile(path string) (runtimeMemoryBackupFileSnapshot, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return runtimeMemoryBackupFileSnapshot{path: path}, nil
+		}
+		return runtimeMemoryBackupFileSnapshot{}, err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return runtimeMemoryBackupFileSnapshot{}, err
+	}
+	dirPerm := os.FileMode(0o755)
+	if dirInfo, dirErr := os.Stat(filepath.Dir(path)); dirErr == nil {
+		dirPerm = dirInfo.Mode().Perm()
+	}
+	return runtimeMemoryBackupFileSnapshot{
+		path:    path,
+		data:    data,
+		exists:  true,
+		perm:    info.Mode().Perm(),
+		dirPerm: dirPerm,
+	}, nil
+}
+
+func runtimeMemoryBackupRestoreFile(snapshot runtimeMemoryBackupFileSnapshot) error {
+	if !snapshot.exists {
+		if err := os.Remove(snapshot.path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(snapshot.path), snapshot.dirPerm); err != nil {
+		return err
+	}
+	return runtimeMemoryBackupWriteFileAtomic(snapshot.path, snapshot.data, snapshot.perm)
+}
+
+func runtimeMemoryBackupRollbackWorkspaceRestore(
+	memoryRoot, backupRoot string,
+	hadExistingRoot bool,
+	proposalSnapshot, catalogSnapshot runtimeMemoryBackupFileSnapshot,
+) error {
+	var errs []string
+	if err := os.RemoveAll(memoryRoot); err != nil && !os.IsNotExist(err) {
+		errs = append(errs, err.Error())
+	}
+	if hadExistingRoot {
+		if err := os.Rename(backupRoot, memoryRoot); err != nil && !os.IsNotExist(err) {
+			errs = append(errs, err.Error())
+		}
+	}
+	if err := runtimeMemoryBackupRestoreFile(proposalSnapshot); err != nil {
+		errs = append(errs, err.Error())
+	}
+	if err := runtimeMemoryBackupRestoreFile(catalogSnapshot); err != nil {
+		errs = append(errs, err.Error())
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("rollback runtime memory backup restore: %s", strings.Join(errs, "; "))
+	}
+	return nil
 }

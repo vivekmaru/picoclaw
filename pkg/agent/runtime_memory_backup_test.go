@@ -349,6 +349,109 @@ func TestAgentLoop_RestoreRuntimeMemoryBackupReplacePreservesExistingMemoryOnWri
 	}
 }
 
+func TestAgentLoop_RestoreRuntimeMemoryBackupReplaceRollsBackStateWhenLaterPersistFails(t *testing.T) {
+	workspace := t.TempDir()
+	shared := NewMemoryStoreForScope(workspace, "shared")
+	if err := shared.WriteLongTerm("## Shared\n\nOriginal shared memory"); err != nil {
+		t.Fatalf("WriteLongTerm(shared) error = %v", err)
+	}
+
+	proposalStore := NewMemoryProposalStore(workspace)
+	if _, err := proposalStore.Create(MemoryProposalRequest{
+		Scope:     "shared",
+		Domain:    "shared_team",
+		Target:    "long_term",
+		Kind:      "task_result",
+		EntryType: "fact",
+		Title:     "Original proposal",
+		Content:   "Original pending proposal",
+	}); err != nil {
+		t.Fatalf("Create(original proposal) error = %v", err)
+	}
+
+	stateStore := getRuntimeMemoryCatalogStateStore(workspace)
+	stateStore.replace([]runtimeMemoryCatalogEntryState{
+		{ID: "existing-entry", Pinned: true, PinnedAt: 123, PinnedBy: "launcher"},
+	})
+	if err := persistRuntimeMemoryCatalogStateBackup(workspace, stateStore.listCopies()); err != nil {
+		t.Fatalf("persist original lifecycle state error = %v", err)
+	}
+
+	registry := &AgentRegistry{
+		agents: map[string]*AgentInstance{
+			"main": {ID: "main", Workspace: workspace},
+		},
+	}
+	loop := &AgentLoop{registry: registry}
+
+	originalWriteFileAtomic := runtimeMemoryBackupWriteFileAtomic
+	var writeCount int
+	runtimeMemoryBackupWriteFileAtomic = func(path string, data []byte, perm os.FileMode) error {
+		writeCount++
+		if filepath.Base(path) == "catalog_state.json" && writeCount >= 2 {
+			return errors.New("simulated catalog state write failure")
+		}
+		return originalWriteFileAtomic(path, data, perm)
+	}
+	defer func() {
+		runtimeMemoryBackupWriteFileAtomic = originalWriteFileAtomic
+	}()
+
+	backup := RuntimeMemoryBackup{
+		Version:     runtimeMemoryBackupVersion,
+		GeneratedAt: time.Now().UnixMilli(),
+		Workspaces: []RuntimeMemoryBackupWorkspace{
+			{
+				OwnerAgentID: "main",
+				Workspace:    workspace,
+				Scopes: []RuntimeMemoryBackupScope{
+					{
+						Scope:           "shared",
+						LongTermContent: "## Shared\n\nReplacement shared memory",
+					},
+				},
+				Proposals: []MemoryProposal{
+					{
+						ID:        "memory-7",
+						Scope:     "shared",
+						Domain:    "shared_team",
+						Target:    "long_term",
+						Kind:      "task_result",
+						EntryType: "decision",
+						Status:    "pending",
+						Title:     "Replacement proposal",
+						Content:   "Replacement proposal content",
+						Created:   456,
+					},
+				},
+				LifecycleEntries: []runtimeMemoryCatalogEntryState{
+					{ID: "replacement-entry", Archived: true, ArchivedAt: 456, ArchivedBy: "launcher"},
+				},
+			},
+		},
+	}
+	payload, err := json.Marshal(backup)
+	if err != nil {
+		t.Fatalf("Marshal(backup) error = %v", err)
+	}
+
+	if _, err := loop.RestoreRuntimeMemoryBackup(payload, "replace"); err == nil {
+		t.Fatal("RestoreRuntimeMemoryBackup(replace) error = nil, want failure")
+	}
+
+	if got := shared.ReadLongTerm(); !strings.Contains(got, "Original shared memory") {
+		t.Fatalf("later persist failure replaced existing shared memory: %q", got)
+	}
+	proposals := NewMemoryProposalStore(workspace).ListCopies()
+	if len(proposals) != 1 || proposals[0].Title != "Original proposal" {
+		t.Fatalf("later persist failure mutated proposals: %#v", proposals)
+	}
+	stateEntries := getRuntimeMemoryCatalogStateStore(workspace).listCopies()
+	if len(stateEntries) != 1 || stateEntries[0].ID != "existing-entry" || !stateEntries[0].Pinned {
+		t.Fatalf("later persist failure mutated lifecycle entries: %#v", stateEntries)
+	}
+}
+
 func TestAgentLoop_RestoreRuntimeMemoryBackupReplaceValidatesAllWorkspacesBeforeWriting(t *testing.T) {
 	workspace := t.TempDir()
 	if err := NewMemoryStoreForScope(workspace, "shared").WriteLongTerm("## Shared\n\nOriginal shared memory"); err != nil {
