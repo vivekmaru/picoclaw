@@ -271,12 +271,16 @@ func runtimeMemoryBackupScopeFromStore(mem *MemoryStore) (RuntimeMemoryBackupSco
 }
 
 func validateRuntimeMemoryBackupWorkspace(workspacePath string, workspace RuntimeMemoryBackupWorkspace) error {
+	memoryRoot := filepath.Clean(filepath.Join(workspacePath, "memory"))
 	scopeDestinations := make(map[string]string)
 	for _, scope := range workspace.Scopes {
 		if strings.TrimSpace(scope.Scope) == "" {
 			return fmt.Errorf("%w: backup scope is required", ErrRuntimeMemoryBackupInvalid)
 		}
 		scopePath := filepath.Clean(runtimeMemoryBackupScopeLongTermPath(workspacePath, scope.Scope))
+		if !runtimeMemoryBackupPathWithinRoot(memoryRoot, scopePath) {
+			return fmt.Errorf("%w: scope %q resolves outside memory root %q", ErrRuntimeMemoryBackupInvalid, scope.Scope, memoryRoot)
+		}
 		if existingScope, ok := scopeDestinations[scopePath]; ok {
 			return fmt.Errorf("%w: scopes %q and %q resolve to the same memory path %q", ErrRuntimeMemoryBackupInvalid, existingScope, scope.Scope, scopePath)
 		}
@@ -315,6 +319,9 @@ func restoreRuntimeMemoryBackupWorkspace(workspace string, backup RuntimeMemoryB
 	}
 	for _, scopeBackup := range backup.Scopes {
 		mem := NewMemoryStoreForScope(stagingWorkspace, scopeBackup.Scope)
+		if !runtimeMemoryBackupPathWithinRoot(stagedMemoryRoot, mem.LongTermPath()) {
+			return fmt.Errorf("%w: scope %q resolves outside memory root %q", ErrRuntimeMemoryBackupInvalid, scopeBackup.Scope, stagedMemoryRoot)
+		}
 		if err := runtimeMemoryBackupWriteLongTerm(mem, scopeBackup.LongTermContent); err != nil {
 			return err
 		}
@@ -323,6 +330,9 @@ func restoreRuntimeMemoryBackupWorkspace(workspace string, backup RuntimeMemoryB
 			notePath := filepath.Join(mem.memoryDir, relPath)
 			if !runtimeMemoryBackupDailyNotePathOK(note.RelativePath) {
 				return fmt.Errorf("%w: invalid daily note path %q", ErrRuntimeMemoryBackupInvalid, note.RelativePath)
+			}
+			if !runtimeMemoryBackupPathWithinRoot(mem.memoryDir, notePath) {
+				return fmt.Errorf("%w: daily note %q resolves outside scope memory root", ErrRuntimeMemoryBackupInvalid, note.RelativePath)
 			}
 			if err := os.MkdirAll(filepath.Dir(notePath), 0o755); err != nil {
 				return err
@@ -506,4 +516,15 @@ func runtimeMemoryBackupRollbackWorkspaceRestore(
 
 func runtimeMemoryBackupScopeLongTermPath(workspace, scope string) string {
 	return filepath.Join(resolveMemoryDir(workspace, scope), "MEMORY.md")
+}
+
+func runtimeMemoryBackupPathWithinRoot(root, target string) bool {
+	root = filepath.Clean(root)
+	target = filepath.Clean(target)
+	rel, err := filepath.Rel(root, target)
+	if err != nil {
+		return false
+	}
+	rel = filepath.Clean(rel)
+	return rel == "." || (!strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != "..")
 }

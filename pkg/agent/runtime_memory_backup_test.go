@@ -273,6 +273,47 @@ func TestAgentLoop_RestoreRuntimeMemoryBackupRejectsDuplicateCanonicalScopePaths
 	}
 }
 
+func TestAgentLoop_RestoreRuntimeMemoryBackupRejectsScopesOutsideMemoryRoot(t *testing.T) {
+	workspace := t.TempDir()
+	registry := &AgentRegistry{
+		agents: map[string]*AgentInstance{
+			"main": {ID: "main", Workspace: workspace},
+		},
+	}
+	loop := &AgentLoop{registry: registry}
+
+	backup := RuntimeMemoryBackup{
+		Version:     runtimeMemoryBackupVersion,
+		GeneratedAt: time.Now().UnixMilli(),
+		Workspaces: []RuntimeMemoryBackupWorkspace{
+			{
+				OwnerAgentID: "main",
+				Workspace:    workspace,
+				Scopes: []RuntimeMemoryBackupScope{
+					{
+						Scope:           "../../outside",
+						LongTermContent: "## Escaped\n\nThis should never be restored",
+					},
+				},
+			},
+		},
+	}
+	payload, err := json.Marshal(backup)
+	if err != nil {
+		t.Fatalf("Marshal(backup) error = %v", err)
+	}
+
+	if _, err := loop.RestoreRuntimeMemoryBackup(payload, "validate"); err == nil || !errors.Is(err, ErrRuntimeMemoryBackupInvalid) {
+		t.Fatalf("RestoreRuntimeMemoryBackup(validate) error = %v, want ErrRuntimeMemoryBackupInvalid", err)
+	}
+	if _, err := loop.RestoreRuntimeMemoryBackup(payload, "replace"); err == nil || !errors.Is(err, ErrRuntimeMemoryBackupInvalid) {
+		t.Fatalf("RestoreRuntimeMemoryBackup(replace) error = %v, want ErrRuntimeMemoryBackupInvalid", err)
+	}
+	if got := NewMemoryStoreForScope(workspace, "shared").ReadLongTerm(); got != "" {
+		t.Fatalf("escaped scope restore wrote shared memory: %q", got)
+	}
+}
+
 func TestAgentLoop_RestoreRuntimeMemoryBackupValidateDoesNotCreateScopeDirectories(t *testing.T) {
 	workspace := t.TempDir()
 	registry := &AgentRegistry{
