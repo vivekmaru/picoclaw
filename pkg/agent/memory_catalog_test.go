@@ -608,6 +608,38 @@ func TestAgentLoop_GetRuntimeMemoryCatalog_DeduplicatesAliasedScopesByPath(t *te
 	}
 }
 
+func TestRuntimeMemoryCatalogEntryIDsRemainStableAcrossScopeAliases(t *testing.T) {
+	workspace := t.TempDir()
+	configuredScope := "teammate:review:qa"
+	discoveredScope := "teammate:review/qa"
+	configuredStore := NewMemoryStoreForScope(workspace, configuredScope)
+	discoveredStore := NewMemoryStoreForScope(workspace, discoveredScope)
+	if configuredStore.LongTermPath() != discoveredStore.LongTermPath() {
+		t.Fatalf("expected aliased scopes to resolve to same file, got %q vs %q", configuredStore.LongTermPath(), discoveredStore.LongTermPath())
+	}
+
+	content := strings.Join([]string{
+		"## Review QA Memory",
+		"",
+		"- Added: 2026-04-06 12:00:00 UTC",
+		"- Domain: teammate_local",
+		"",
+		"One canonical entry",
+	}, "\n")
+	if err := configuredStore.WriteLongTerm(content); err != nil {
+		t.Fatalf("WriteLongTerm() error = %v", err)
+	}
+
+	configuredEntries := parseRuntimeMemoryCatalogEntries("main", workspace, configuredStore, content)
+	discoveredEntries := parseRuntimeMemoryCatalogEntries("main", workspace, discoveredStore, content)
+	if len(configuredEntries) != 1 || len(discoveredEntries) != 1 {
+		t.Fatalf("entry counts = %d/%d, want 1/1", len(configuredEntries), len(discoveredEntries))
+	}
+	if configuredEntries[0].ID != discoveredEntries[0].ID {
+		t.Fatalf("scope alias changed lifecycle ID: configured=%q discovered=%q", configuredEntries[0].ID, discoveredEntries[0].ID)
+	}
+}
+
 func TestAgentLoop_ExportRuntimeMemoryCatalog_JSON(t *testing.T) {
 	workspace := t.TempDir()
 	mem := NewMemoryStoreForScope(workspace, "shared")
