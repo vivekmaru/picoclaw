@@ -273,6 +273,85 @@ func TestAgentLoop_RestoreRuntimeMemoryBackupRejectsDuplicateCanonicalScopePaths
 	}
 }
 
+func TestAgentLoop_RestoreRuntimeMemoryBackupValidateDoesNotCreateScopeDirectories(t *testing.T) {
+	workspace := t.TempDir()
+	registry := &AgentRegistry{
+		agents: map[string]*AgentInstance{
+			"main": {ID: "main", Workspace: workspace},
+		},
+	}
+	loop := &AgentLoop{registry: registry}
+
+	backup := RuntimeMemoryBackup{
+		Version:     runtimeMemoryBackupVersion,
+		GeneratedAt: time.Now().UnixMilli(),
+		Workspaces: []RuntimeMemoryBackupWorkspace{
+			{
+				OwnerAgentID: "main",
+				Workspace:    "  " + workspace + "  ",
+				Scopes: []RuntimeMemoryBackupScope{
+					{
+						Scope:           "team:a",
+						LongTermContent: "## Team A\n\nNo writes during validate",
+					},
+				},
+			},
+		},
+	}
+	payload, err := json.Marshal(backup)
+	if err != nil {
+		t.Fatalf("Marshal(backup) error = %v", err)
+	}
+
+	if _, err := loop.RestoreRuntimeMemoryBackup(payload, "validate"); err != nil {
+		t.Fatalf("RestoreRuntimeMemoryBackup(validate) error = %v", err)
+	}
+
+	scopeDir := filepath.Join(workspace, "memory", "scopes", "team", "a")
+	if _, err := os.Stat(scopeDir); !os.IsNotExist(err) {
+		t.Fatalf("validate created scope directory %q err=%v", scopeDir, err)
+	}
+}
+
+func TestAgentLoop_RestoreRuntimeMemoryBackupRejectsDuplicateWorkspaces(t *testing.T) {
+	workspace := t.TempDir()
+	registry := &AgentRegistry{
+		agents: map[string]*AgentInstance{
+			"main": {ID: "main", Workspace: workspace},
+		},
+	}
+	loop := &AgentLoop{registry: registry}
+
+	backup := RuntimeMemoryBackup{
+		Version:     runtimeMemoryBackupVersion,
+		GeneratedAt: time.Now().UnixMilli(),
+		Workspaces: []RuntimeMemoryBackupWorkspace{
+			{
+				OwnerAgentID: "main",
+				Workspace:    workspace,
+				Scopes: []RuntimeMemoryBackupScope{
+					{Scope: "shared", LongTermContent: "## Shared\n\nFirst"},
+				},
+			},
+			{
+				OwnerAgentID: "main",
+				Workspace:    " " + workspace + " ",
+				Scopes: []RuntimeMemoryBackupScope{
+					{Scope: "shared", LongTermContent: "## Shared\n\nSecond"},
+				},
+			},
+		},
+	}
+	payload, err := json.Marshal(backup)
+	if err != nil {
+		t.Fatalf("Marshal(backup) error = %v", err)
+	}
+
+	if _, err := loop.RestoreRuntimeMemoryBackup(payload, "validate"); err == nil || !errors.Is(err, ErrRuntimeMemoryBackupInvalid) {
+		t.Fatalf("RestoreRuntimeMemoryBackup(validate) error = %v, want ErrRuntimeMemoryBackupInvalid", err)
+	}
+}
+
 func TestPersistRuntimeMemoryCatalogStateBackupPreservesCachedStateOnWriteFailure(t *testing.T) {
 	workspace := t.TempDir()
 	store := getRuntimeMemoryCatalogStateStore(workspace)
@@ -449,6 +528,91 @@ func TestAgentLoop_RestoreRuntimeMemoryBackupReplaceRollsBackStateWhenLaterPersi
 	stateEntries := getRuntimeMemoryCatalogStateStore(workspace).listCopies()
 	if len(stateEntries) != 1 || stateEntries[0].ID != "existing-entry" || !stateEntries[0].Pinned {
 		t.Fatalf("later persist failure mutated lifecycle entries: %#v", stateEntries)
+	}
+}
+
+func TestAgentLoop_RestoreRuntimeMemoryBackupReplaceReportsRollbackFailure(t *testing.T) {
+	workspace := t.TempDir()
+	shared := NewMemoryStoreForScope(workspace, "shared")
+	if err := shared.WriteLongTerm("## Shared\n\nOriginal shared memory"); err != nil {
+		t.Fatalf("WriteLongTerm(shared) error = %v", err)
+	}
+	stateStore := getRuntimeMemoryCatalogStateStore(workspace)
+	stateStore.replace([]runtimeMemoryCatalogEntryState{
+		{ID: "existing-entry", Pinned: true, PinnedAt: 123, PinnedBy: "launcher"},
+	})
+	if err := persistRuntimeMemoryCatalogStateBackup(workspace, stateStore.listCopies()); err != nil {
+		t.Fatalf("persist original lifecycle state error = %v", err)
+	}
+
+	registry := &AgentRegistry{
+		agents: map[string]*AgentInstance{
+			"main": {ID: "main", Workspace: workspace},
+		},
+	}
+	loop := &AgentLoop{registry: registry}
+
+	originalWriteFileAtomic := runtimeMemoryBackupWriteFileAtomic
+	callCount := 0
+	runtimeMemoryBackupWriteFileAtomic = func(path string, data []byte, perm os.FileMode) error {
+		callCount++
+		switch filepath.Base(path) {
+		case "proposals.json":
+			return errors.New("simulated proposal write failure")
+		case "catalog_state.json":
+			return errors.New("simulated rollback catalog restore failure")
+		default:
+			return originalWriteFileAtomic(path, data, perm)
+		}
+	}
+	defer func() {
+		runtimeMemoryBackupWriteFileAtomic = originalWriteFileAtomic
+	}()
+
+	backup := RuntimeMemoryBackup{
+		Version:     runtimeMemoryBackupVersion,
+		GeneratedAt: time.Now().UnixMilli(),
+		Workspaces: []RuntimeMemoryBackupWorkspace{
+			{
+				OwnerAgentID: "main",
+				Workspace:    workspace,
+				Scopes: []RuntimeMemoryBackupScope{
+					{Scope: "shared", LongTermContent: "## Shared\n\nReplacement shared memory"},
+				},
+				Proposals: []MemoryProposal{
+					{
+						ID:        "memory-7",
+						Scope:     "shared",
+						Domain:    "shared_team",
+						Target:    "long_term",
+						Kind:      "task_result",
+						EntryType: "fact",
+						Status:    "pending",
+						Title:     "Replacement proposal",
+						Content:   "Replacement proposal content",
+						Created:   456,
+					},
+				},
+				LifecycleEntries: []runtimeMemoryCatalogEntryState{
+					{ID: "replacement-entry", Archived: true, ArchivedAt: 456, ArchivedBy: "launcher"},
+				},
+			},
+		},
+	}
+	payload, err := json.Marshal(backup)
+	if err != nil {
+		t.Fatalf("Marshal(backup) error = %v", err)
+	}
+
+	_, err = loop.RestoreRuntimeMemoryBackup(payload, "replace")
+	if err == nil {
+		t.Fatal("RestoreRuntimeMemoryBackup(replace) error = nil, want combined failure")
+	}
+	if !strings.Contains(err.Error(), "simulated proposal write failure") || !strings.Contains(err.Error(), "simulated rollback catalog restore failure") {
+		t.Fatalf("combined error = %v, want both original and rollback failure", err)
+	}
+	if got := shared.ReadLongTerm(); !strings.Contains(got, "Original shared memory") {
+		t.Fatalf("rollback-reporting failure replaced existing shared memory: %q", got)
 	}
 }
 

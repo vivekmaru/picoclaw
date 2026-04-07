@@ -196,12 +196,17 @@ func (al *AgentLoop) RestoreRuntimeMemoryBackup(payload []byte, mode string) (Ru
 
 	result := RuntimeMemoryBackupRestoreResult{Mode: mode, ValidatedOnly: mode == "validate"}
 	validatedWorkspaces := make([]string, 0, len(backup.Workspaces))
+	seenWorkspaces := make(map[string]struct{}, len(backup.Workspaces))
 	for _, workspaceBackup := range backup.Workspaces {
 		workspace := filepath.Clean(strings.TrimSpace(workspaceBackup.Workspace))
 		if workspace == "" || !allowedWorkspaces[workspace] {
 			return RuntimeMemoryBackupRestoreResult{}, fmt.Errorf("%w: workspace %q is not part of this runtime", ErrRuntimeMemoryBackupInvalid, workspaceBackup.Workspace)
 		}
-		if err := validateRuntimeMemoryBackupWorkspace(workspaceBackup); err != nil {
+		if _, ok := seenWorkspaces[workspace]; ok {
+			return RuntimeMemoryBackupRestoreResult{}, fmt.Errorf("%w: duplicate workspace %q in backup", ErrRuntimeMemoryBackupInvalid, workspaceBackup.Workspace)
+		}
+		seenWorkspaces[workspace] = struct{}{}
+		if err := validateRuntimeMemoryBackupWorkspace(workspace, workspaceBackup); err != nil {
 			return RuntimeMemoryBackupRestoreResult{}, err
 		}
 		validatedWorkspaces = append(validatedWorkspaces, workspace)
@@ -265,14 +270,13 @@ func runtimeMemoryBackupScopeFromStore(mem *MemoryStore) (RuntimeMemoryBackupSco
 	return scopeBackup, nil
 }
 
-func validateRuntimeMemoryBackupWorkspace(workspace RuntimeMemoryBackupWorkspace) error {
+func validateRuntimeMemoryBackupWorkspace(workspacePath string, workspace RuntimeMemoryBackupWorkspace) error {
 	scopeDestinations := make(map[string]string)
 	for _, scope := range workspace.Scopes {
 		if strings.TrimSpace(scope.Scope) == "" {
 			return fmt.Errorf("%w: backup scope is required", ErrRuntimeMemoryBackupInvalid)
 		}
-		scopeStore := NewMemoryStoreForScope(workspace.Workspace, scope.Scope)
-		scopePath := filepath.Clean(scopeStore.LongTermPath())
+		scopePath := filepath.Clean(runtimeMemoryBackupScopeLongTermPath(workspacePath, scope.Scope))
 		if existingScope, ok := scopeDestinations[scopePath]; ok {
 			return fmt.Errorf("%w: scopes %q and %q resolve to the same memory path %q", ErrRuntimeMemoryBackupInvalid, existingScope, scope.Scope, scopePath)
 		}
@@ -344,11 +348,15 @@ func restoreRuntimeMemoryBackupWorkspace(workspace string, backup RuntimeMemoryB
 	}
 
 	if err := persistRuntimeMemoryProposalBackup(workspace, backup.Proposals); err != nil {
-		_ = runtimeMemoryBackupRollbackWorkspaceRestore(memoryRoot, backupRoot, hadExistingRoot, proposalSnapshot, catalogSnapshot)
+		if rollbackErr := runtimeMemoryBackupRollbackWorkspaceRestore(memoryRoot, backupRoot, hadExistingRoot, proposalSnapshot, catalogSnapshot); rollbackErr != nil {
+			return errors.Join(err, rollbackErr)
+		}
 		return err
 	}
 	if err := persistRuntimeMemoryCatalogStateBackup(workspace, backup.LifecycleEntries); err != nil {
-		_ = runtimeMemoryBackupRollbackWorkspaceRestore(memoryRoot, backupRoot, hadExistingRoot, proposalSnapshot, catalogSnapshot)
+		if rollbackErr := runtimeMemoryBackupRollbackWorkspaceRestore(memoryRoot, backupRoot, hadExistingRoot, proposalSnapshot, catalogSnapshot); rollbackErr != nil {
+			return errors.Join(err, rollbackErr)
+		}
 		return err
 	}
 	if hadExistingRoot {
@@ -494,4 +502,8 @@ func runtimeMemoryBackupRollbackWorkspaceRestore(
 		return fmt.Errorf("rollback runtime memory backup restore: %s", strings.Join(errs, "; "))
 	}
 	return nil
+}
+
+func runtimeMemoryBackupScopeLongTermPath(workspace, scope string) string {
+	return filepath.Join(resolveMemoryDir(workspace, scope), "MEMORY.md")
 }
