@@ -132,6 +132,33 @@ func TestAgentLoop_GetRuntimeMemoryBackupDeduplicatesCanonicalWorkspaceAliases(t
 	}
 }
 
+func TestAgentLoop_GetRuntimeMemoryBackupIgnoresBlankWorkspaces(t *testing.T) {
+	workspace := t.TempDir()
+	shared := NewMemoryStoreForScope(workspace, "shared")
+	if err := shared.WriteLongTerm("## Shared\n\nOnly the real workspace should export"); err != nil {
+		t.Fatalf("WriteLongTerm(shared) error = %v", err)
+	}
+
+	registry := &AgentRegistry{
+		agents: map[string]*AgentInstance{
+			"blank": {ID: "blank", Workspace: " \t "},
+			"main":  {ID: "main", Workspace: workspace},
+		},
+	}
+	loop := &AgentLoop{registry: registry}
+
+	backup, err := loop.GetRuntimeMemoryBackup()
+	if err != nil {
+		t.Fatalf("GetRuntimeMemoryBackup() error = %v", err)
+	}
+	if backup.Summary.WorkspaceCount != 1 {
+		t.Fatalf("WorkspaceCount = %d, want 1", backup.Summary.WorkspaceCount)
+	}
+	if len(backup.Workspaces) != 1 || backup.Workspaces[0].Workspace == "." {
+		t.Fatalf("blank workspace leaked into backup: %#v", backup.Workspaces)
+	}
+}
+
 func TestAgentLoop_RestoreRuntimeMemoryBackup(t *testing.T) {
 	workspace := t.TempDir()
 	registry := &AgentRegistry{
@@ -309,6 +336,56 @@ func TestAgentLoop_RestoreRuntimeMemoryBackupRejectsDuplicateCanonicalScopePaths
 
 	if _, err := loop.RestoreRuntimeMemoryBackup(payload, "validate"); err == nil || !errors.Is(err, ErrRuntimeMemoryBackupInvalid) {
 		t.Fatalf("RestoreRuntimeMemoryBackup(validate) error = %v, want ErrRuntimeMemoryBackupInvalid", err)
+	}
+}
+
+func TestAgentLoop_RestoreRuntimeMemoryBackupRejectsDuplicateWorkspaceAliasesByFilesystemKey(t *testing.T) {
+	workspace := t.TempDir()
+	registry := &AgentRegistry{
+		agents: map[string]*AgentInstance{
+			"main": {ID: "main", Workspace: workspace},
+		},
+	}
+	loop := &AgentLoop{registry: registry}
+
+	workspaceA := workspace
+	workspaceB := strings.ToUpper(workspace)
+	expectDuplicate := runtimeMemoryBackupWorkspaceCollisionKey(workspaceA) == runtimeMemoryBackupWorkspaceCollisionKey(workspaceB)
+
+	backup := RuntimeMemoryBackup{
+		Version:     runtimeMemoryBackupVersion,
+		GeneratedAt: time.Now().UnixMilli(),
+		Workspaces: []RuntimeMemoryBackupWorkspace{
+			{
+				OwnerAgentID: "main",
+				Workspace:    workspaceA,
+				Scopes: []RuntimeMemoryBackupScope{
+					{Scope: "shared", LongTermContent: "## Shared\n\nFirst"},
+				},
+			},
+			{
+				OwnerAgentID: "main",
+				Workspace:    workspaceB,
+				Scopes: []RuntimeMemoryBackupScope{
+					{Scope: "shared", LongTermContent: "## Shared\n\nSecond"},
+				},
+			},
+		},
+	}
+	payload, err := json.Marshal(backup)
+	if err != nil {
+		t.Fatalf("Marshal(backup) error = %v", err)
+	}
+
+	_, err = loop.RestoreRuntimeMemoryBackup(payload, "validate")
+	if expectDuplicate {
+		if err == nil || !errors.Is(err, ErrRuntimeMemoryBackupInvalid) {
+			t.Fatalf("RestoreRuntimeMemoryBackup(validate) error = %v, want ErrRuntimeMemoryBackupInvalid", err)
+		}
+		return
+	}
+	if err != nil {
+		t.Fatalf("RestoreRuntimeMemoryBackup(validate) unexpected error = %v", err)
 	}
 }
 

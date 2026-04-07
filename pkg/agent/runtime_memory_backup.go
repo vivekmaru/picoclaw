@@ -201,7 +201,7 @@ func (al *AgentLoop) RestoreRuntimeMemoryBackup(payload []byte, mode string) (Ru
 	}
 	allowedWorkspaces := make(map[string]bool)
 	for _, ref := range runtimeMemoryCatalogWorkspaces(registry) {
-		allowedWorkspaces[filepath.Clean(ref.Workspace)] = true
+		allowedWorkspaces[runtimeMemoryBackupWorkspaceCollisionKey(ref.Workspace)] = true
 	}
 
 	result := RuntimeMemoryBackupRestoreResult{Mode: mode, ValidatedOnly: mode == "validate"}
@@ -209,13 +209,14 @@ func (al *AgentLoop) RestoreRuntimeMemoryBackup(payload []byte, mode string) (Ru
 	seenWorkspaces := make(map[string]struct{}, len(backup.Workspaces))
 	for _, workspaceBackup := range backup.Workspaces {
 		workspace := runtimeMemoryBackupCanonicalWorkspace(workspaceBackup.Workspace)
-		if workspace == "" || !allowedWorkspaces[workspace] {
+		workspaceKey := runtimeMemoryBackupWorkspaceCollisionKey(workspace)
+		if workspace == "" || !allowedWorkspaces[workspaceKey] {
 			return RuntimeMemoryBackupRestoreResult{}, fmt.Errorf("%w: workspace %q is not part of this runtime", ErrRuntimeMemoryBackupInvalid, workspaceBackup.Workspace)
 		}
-		if _, ok := seenWorkspaces[workspace]; ok {
+		if _, ok := seenWorkspaces[workspaceKey]; ok {
 			return RuntimeMemoryBackupRestoreResult{}, fmt.Errorf("%w: duplicate workspace %q in backup", ErrRuntimeMemoryBackupInvalid, workspaceBackup.Workspace)
 		}
-		seenWorkspaces[workspace] = struct{}{}
+		seenWorkspaces[workspaceKey] = struct{}{}
 		if err := validateRuntimeMemoryBackupWorkspace(workspace, workspaceBackup); err != nil {
 			return RuntimeMemoryBackupRestoreResult{}, err
 		}
@@ -648,5 +649,17 @@ func runtimeMemoryBackupValidatedID(label, raw string) (string, error) {
 }
 
 func runtimeMemoryBackupCanonicalWorkspace(workspace string) string {
-	return filepath.Clean(strings.TrimSpace(workspace))
+	workspace = strings.TrimSpace(workspace)
+	if workspace == "" {
+		return ""
+	}
+	return filepath.Clean(workspace)
+}
+
+func runtimeMemoryBackupWorkspaceCollisionKey(workspace string) string {
+	workspace = runtimeMemoryBackupCanonicalWorkspace(workspace)
+	if workspace == "" {
+		return ""
+	}
+	return runtimeMemoryBackupCollisionKey(workspace)
 }

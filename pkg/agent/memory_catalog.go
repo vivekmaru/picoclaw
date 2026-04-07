@@ -264,10 +264,11 @@ func runtimeMemoryCatalogWorkspaces(registry *AgentRegistry) []runtimeMemoryWork
 			continue
 		}
 		workspace := runtimeMemoryBackupCanonicalWorkspace(agentInst.Workspace)
-		if workspace == "" || seen[workspace] {
+		workspaceKey := runtimeMemoryBackupWorkspaceCollisionKey(workspace)
+		if workspace == "" || seen[workspaceKey] {
 			continue
 		}
-		seen[workspace] = true
+		seen[workspaceKey] = true
 		refs = append(refs, runtimeMemoryWorkspaceRef{
 			OwnerAgentID: agentID,
 			Workspace:    workspace,
@@ -300,7 +301,7 @@ func runtimeMemoryCatalogScopesForWorkspace(registry *AgentRegistry, ref runtime
 		if !ok || agentInst == nil {
 			continue
 		}
-		if runtimeMemoryBackupCanonicalWorkspace(agentInst.Workspace) != ref.Workspace {
+		if runtimeMemoryBackupWorkspaceCollisionKey(agentInst.Workspace) != runtimeMemoryBackupWorkspaceCollisionKey(ref.Workspace) {
 			continue
 		}
 		addScope(teammate.MemoryScope)

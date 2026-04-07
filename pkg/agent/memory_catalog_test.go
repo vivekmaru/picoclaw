@@ -145,6 +145,44 @@ func TestAgentLoop_GetRuntimeMemoryCatalogDeduplicatesCanonicalWorkspaceAliases(
 	}
 }
 
+func TestAgentLoop_GetRuntimeMemoryCatalogIgnoresBlankWorkspaces(t *testing.T) {
+	workspace := t.TempDir()
+	store := NewMemoryProposalStore(workspace)
+	proposal, err := store.Create(MemoryProposalRequest{
+		Scope:     "shared",
+		Domain:    "shared_team",
+		Target:    "long_term",
+		Kind:      "task_result",
+		EntryType: "fact",
+		Title:     "Valid workspace entry",
+		Content:   "Blank workspace agents should be ignored.",
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if _, err := store.Approve(proposal.ID, "launcher", ""); err != nil {
+		t.Fatalf("Approve() error = %v", err)
+	}
+
+	registry := &AgentRegistry{
+		agents: map[string]*AgentInstance{
+			"blank": {ID: "blank", Workspace: "   "},
+			"main":  {ID: "main", Workspace: workspace},
+		},
+	}
+	loop := &AgentLoop{registry: registry}
+
+	catalog := loop.GetRuntimeMemoryCatalog()
+	if catalog.Summary.WorkspaceCount != 1 {
+		t.Fatalf("WorkspaceCount = %d, want 1", catalog.Summary.WorkspaceCount)
+	}
+	for _, scope := range catalog.Scopes {
+		if scope.Workspace == "." {
+			t.Fatalf("blank workspace leaked into catalog scopes: %#v", catalog.Scopes)
+		}
+	}
+}
+
 func TestAgentLoop_MemoryCatalogLifecycleActions(t *testing.T) {
 	workspace := t.TempDir()
 	store := NewMemoryProposalStore(workspace)
