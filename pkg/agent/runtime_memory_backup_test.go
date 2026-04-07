@@ -398,6 +398,43 @@ func TestAgentLoop_RestoreRuntimeMemoryBackupRejectsDuplicateDailyNotePathsWithi
 	}
 }
 
+func TestAgentLoop_RestoreRuntimeMemoryBackupRejectsDailyNotePathsWithSurroundingWhitespace(t *testing.T) {
+	workspace := t.TempDir()
+	registry := &AgentRegistry{
+		agents: map[string]*AgentInstance{
+			"main": {ID: "main", Workspace: workspace},
+		},
+	}
+	loop := &AgentLoop{registry: registry}
+
+	backup := RuntimeMemoryBackup{
+		Version:     runtimeMemoryBackupVersion,
+		GeneratedAt: time.Now().UnixMilli(),
+		Workspaces: []RuntimeMemoryBackupWorkspace{
+			{
+				OwnerAgentID: "main",
+				Workspace:    workspace,
+				Scopes: []RuntimeMemoryBackupScope{
+					{
+						Scope: "shared",
+						DailyNotes: []RuntimeMemoryBackupDailyNote{
+							{RelativePath: " 202604/20260407.md ", Content: "whitespace should be rejected"},
+						},
+					},
+				},
+			},
+		},
+	}
+	payload, err := json.Marshal(backup)
+	if err != nil {
+		t.Fatalf("Marshal(backup) error = %v", err)
+	}
+
+	if _, err := loop.RestoreRuntimeMemoryBackup(payload, "validate"); err == nil || !errors.Is(err, ErrRuntimeMemoryBackupInvalid) {
+		t.Fatalf("RestoreRuntimeMemoryBackup(validate) error = %v, want ErrRuntimeMemoryBackupInvalid", err)
+	}
+}
+
 func TestAgentLoop_RestoreRuntimeMemoryBackupRejectsDuplicateProposalIDs(t *testing.T) {
 	workspace := t.TempDir()
 	registry := &AgentRegistry{
@@ -431,6 +468,38 @@ func TestAgentLoop_RestoreRuntimeMemoryBackupRejectsDuplicateProposalIDs(t *test
 	}
 }
 
+func TestAgentLoop_RestoreRuntimeMemoryBackupRejectsProposalIDsWithSurroundingWhitespace(t *testing.T) {
+	workspace := t.TempDir()
+	registry := &AgentRegistry{
+		agents: map[string]*AgentInstance{
+			"main": {ID: "main", Workspace: workspace},
+		},
+	}
+	loop := &AgentLoop{registry: registry}
+
+	backup := RuntimeMemoryBackup{
+		Version:     runtimeMemoryBackupVersion,
+		GeneratedAt: time.Now().UnixMilli(),
+		Workspaces: []RuntimeMemoryBackupWorkspace{
+			{
+				OwnerAgentID: "main",
+				Workspace:    workspace,
+				Proposals: []MemoryProposal{
+					{ID: "memory-7 ", Scope: "shared", Status: "pending", Content: "whitespace should be rejected"},
+				},
+			},
+		},
+	}
+	payload, err := json.Marshal(backup)
+	if err != nil {
+		t.Fatalf("Marshal(backup) error = %v", err)
+	}
+
+	if _, err := loop.RestoreRuntimeMemoryBackup(payload, "validate"); err == nil || !errors.Is(err, ErrRuntimeMemoryBackupInvalid) {
+		t.Fatalf("RestoreRuntimeMemoryBackup(validate) error = %v, want ErrRuntimeMemoryBackupInvalid", err)
+	}
+}
+
 func TestAgentLoop_RestoreRuntimeMemoryBackupRejectsDuplicateLifecycleEntryIDs(t *testing.T) {
 	workspace := t.TempDir()
 	registry := &AgentRegistry{
@@ -450,6 +519,38 @@ func TestAgentLoop_RestoreRuntimeMemoryBackupRejectsDuplicateLifecycleEntryIDs(t
 				LifecycleEntries: []runtimeMemoryCatalogEntryState{
 					{ID: "memory-1", Pinned: true},
 					{ID: "memory-1", Archived: true},
+				},
+			},
+		},
+	}
+	payload, err := json.Marshal(backup)
+	if err != nil {
+		t.Fatalf("Marshal(backup) error = %v", err)
+	}
+
+	if _, err := loop.RestoreRuntimeMemoryBackup(payload, "validate"); err == nil || !errors.Is(err, ErrRuntimeMemoryBackupInvalid) {
+		t.Fatalf("RestoreRuntimeMemoryBackup(validate) error = %v, want ErrRuntimeMemoryBackupInvalid", err)
+	}
+}
+
+func TestAgentLoop_RestoreRuntimeMemoryBackupRejectsLifecycleEntryIDsWithSurroundingWhitespace(t *testing.T) {
+	workspace := t.TempDir()
+	registry := &AgentRegistry{
+		agents: map[string]*AgentInstance{
+			"main": {ID: "main", Workspace: workspace},
+		},
+	}
+	loop := &AgentLoop{registry: registry}
+
+	backup := RuntimeMemoryBackup{
+		Version:     runtimeMemoryBackupVersion,
+		GeneratedAt: time.Now().UnixMilli(),
+		Workspaces: []RuntimeMemoryBackupWorkspace{
+			{
+				OwnerAgentID: "main",
+				Workspace:    workspace,
+				LifecycleEntries: []runtimeMemoryCatalogEntryState{
+					{ID: "memory-1 ", Pinned: true},
 				},
 			},
 		},

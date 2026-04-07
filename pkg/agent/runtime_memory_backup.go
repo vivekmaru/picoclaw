@@ -322,9 +322,9 @@ func validateRuntimeMemoryBackupWorkspace(workspacePath string, workspace Runtim
 	}
 	seenProposalIDs := make(map[string]struct{}, len(workspace.Proposals))
 	for _, proposal := range workspace.Proposals {
-		id := strings.TrimSpace(proposal.ID)
-		if id == "" {
-			return fmt.Errorf("%w: memory proposal ID is required", ErrRuntimeMemoryBackupInvalid)
+		id, err := runtimeMemoryBackupValidatedID("memory proposal ID", proposal.ID)
+		if err != nil {
+			return err
 		}
 		if _, ok := seenProposalIDs[id]; ok {
 			return fmt.Errorf("%w: duplicate memory proposal ID %q", ErrRuntimeMemoryBackupInvalid, id)
@@ -333,9 +333,9 @@ func validateRuntimeMemoryBackupWorkspace(workspacePath string, workspace Runtim
 	}
 	seenLifecycleIDs := make(map[string]struct{}, len(workspace.LifecycleEntries))
 	for _, entry := range workspace.LifecycleEntries {
-		id := strings.TrimSpace(entry.ID)
-		if id == "" {
-			return fmt.Errorf("%w: runtime memory catalog entry ID is required", ErrRuntimeMemoryBackupInvalid)
+		id, err := runtimeMemoryBackupValidatedID("runtime memory catalog entry ID", entry.ID)
+		if err != nil {
+			return err
 		}
 		if _, ok := seenLifecycleIDs[id]; ok {
 			return fmt.Errorf("%w: duplicate runtime memory catalog entry ID %q", ErrRuntimeMemoryBackupInvalid, id)
@@ -466,7 +466,10 @@ func persistRuntimeMemoryCatalogStateBackup(workspace string, entries []runtimeM
 }
 
 func runtimeMemoryBackupRelativePathOK(path string) bool {
-	path = filepath.Clean(filepath.FromSlash(strings.TrimSpace(path)))
+	if strings.TrimSpace(path) != path {
+		return false
+	}
+	path = filepath.Clean(filepath.FromSlash(path))
 	if path == "." || path == "" || filepath.IsAbs(path) {
 		return false
 	}
@@ -628,4 +631,15 @@ func runtimeMemoryBackupCollisionKey(path string) string {
 		key = strings.ToLower(key)
 	}
 	return filepath.ToSlash(key)
+}
+
+func runtimeMemoryBackupValidatedID(label, raw string) (string, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "", fmt.Errorf("%w: %s is required", ErrRuntimeMemoryBackupInvalid, label)
+	}
+	if raw != trimmed {
+		return "", fmt.Errorf("%w: %s %q must not contain surrounding whitespace", ErrRuntimeMemoryBackupInvalid, label, raw)
+	}
+	return trimmed, nil
 }
