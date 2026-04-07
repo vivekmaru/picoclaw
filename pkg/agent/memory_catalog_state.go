@@ -73,11 +73,13 @@ func (s *runtimeMemoryCatalogStateStore) apply(entry *RuntimeMemoryEntryInfo) {
 	if s == nil || entry == nil {
 		return
 	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	if s.loadErr != nil {
 		return
 	}
-	state, ok := s.getCopy(entry.ID)
-	if !ok {
+	state, ok := s.entries[entry.ID]
+	if !ok || state == nil {
 		return
 	}
 	entry.Pinned = state.Pinned
@@ -189,7 +191,8 @@ func (s *runtimeMemoryCatalogStateStore) load() error {
 		if strings.TrimSpace(entry.ID) == "" {
 			continue
 		}
-		s.entries[entry.ID] = &entry
+		entryCopy := entry
+		s.entries[entry.ID] = &entryCopy
 	}
 	return nil
 }

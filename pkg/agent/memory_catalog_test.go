@@ -373,6 +373,40 @@ func TestRuntimeMemoryCatalogStateStoreRetriesLoadAfterTransientFailure(t *testi
 	}
 }
 
+func TestRuntimeMemoryCatalogStateStoreLoadCreatesDistinctEntries(t *testing.T) {
+	workspace := t.TempDir()
+	stateFile := filepath.Join(workspace, "state", "memory", "catalog_state.json")
+	if err := os.MkdirAll(filepath.Dir(stateFile), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	validState := `{"version":1,"entries":[{"id":"memory-a","pinned":true,"pinned_at":111,"pinned_by":"alice"},{"id":"memory-b","archived":true,"archived_at":222,"archived_by":"bob"}]}`
+	if err := os.WriteFile(stateFile, []byte(validState), 0o600); err != nil {
+		t.Fatalf("WriteFile(valid) error = %v", err)
+	}
+
+	store := &runtimeMemoryCatalogStateStore{
+		stateFile: stateFile,
+		entries:   make(map[string]*runtimeMemoryCatalogEntryState),
+	}
+	if err := store.load(); err != nil {
+		t.Fatalf("load() error = %v", err)
+	}
+	first, ok := store.getCopy("memory-a")
+	if !ok {
+		t.Fatal("expected first entry")
+	}
+	second, ok := store.getCopy("memory-b")
+	if !ok {
+		t.Fatal("expected second entry")
+	}
+	if !first.Pinned || first.PinnedBy != "alice" || first.Archived {
+		t.Fatalf("unexpected first entry after load: %#v", first)
+	}
+	if !second.Archived || second.ArchivedBy != "bob" || second.Pinned {
+		t.Fatalf("unexpected second entry after load: %#v", second)
+	}
+}
+
 func TestRuntimeMemoryCatalogStateStorePersistFailureRollsBackMutation(t *testing.T) {
 	workspace := t.TempDir()
 	stateDir := filepath.Join(workspace, "state", "memory", "catalog_state.json")
