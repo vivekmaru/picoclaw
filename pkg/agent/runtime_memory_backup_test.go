@@ -314,6 +314,44 @@ func TestAgentLoop_RestoreRuntimeMemoryBackupRejectsScopesOutsideMemoryRoot(t *t
 	}
 }
 
+func TestAgentLoop_RestoreRuntimeMemoryBackupRejectsDuplicateDailyNotePathsWithinScope(t *testing.T) {
+	workspace := t.TempDir()
+	registry := &AgentRegistry{
+		agents: map[string]*AgentInstance{
+			"main": {ID: "main", Workspace: workspace},
+		},
+	}
+	loop := &AgentLoop{registry: registry}
+
+	backup := RuntimeMemoryBackup{
+		Version:     runtimeMemoryBackupVersion,
+		GeneratedAt: time.Now().UnixMilli(),
+		Workspaces: []RuntimeMemoryBackupWorkspace{
+			{
+				OwnerAgentID: "main",
+				Workspace:    workspace,
+				Scopes: []RuntimeMemoryBackupScope{
+					{
+						Scope: "shared",
+						DailyNotes: []RuntimeMemoryBackupDailyNote{
+							{RelativePath: "202604/20260407.md", Content: "first"},
+							{RelativePath: "202604/./20260407.md", Content: "second"},
+						},
+					},
+				},
+			},
+		},
+	}
+	payload, err := json.Marshal(backup)
+	if err != nil {
+		t.Fatalf("Marshal(backup) error = %v", err)
+	}
+
+	if _, err := loop.RestoreRuntimeMemoryBackup(payload, "validate"); err == nil || !errors.Is(err, ErrRuntimeMemoryBackupInvalid) {
+		t.Fatalf("RestoreRuntimeMemoryBackup(validate) error = %v, want ErrRuntimeMemoryBackupInvalid", err)
+	}
+}
+
 func TestAgentLoop_RestoreRuntimeMemoryBackupValidateDoesNotCreateScopeDirectories(t *testing.T) {
 	workspace := t.TempDir()
 	registry := &AgentRegistry{
@@ -707,5 +745,108 @@ func TestAgentLoop_RestoreRuntimeMemoryBackupReplaceValidatesAllWorkspacesBefore
 
 	if got := NewMemoryStoreForScope(workspace, "shared").ReadLongTerm(); !strings.Contains(got, "Original shared memory") {
 		t.Fatalf("replace mutated validated workspace before failing later validation: %q", got)
+	}
+}
+
+func TestAgentLoop_RestoreRuntimeMemoryBackupReplaceRollsBackEarlierWorkspacesOnLaterFailure(t *testing.T) {
+	workspaceOne := t.TempDir()
+	workspaceTwo := t.TempDir()
+	if err := NewMemoryStoreForScope(workspaceOne, "shared").WriteLongTerm("## Shared\n\nWorkspace one original"); err != nil {
+		t.Fatalf("WriteLongTerm(workspaceOne) error = %v", err)
+	}
+	if err := NewMemoryStoreForScope(workspaceTwo, "shared").WriteLongTerm("## Shared\n\nWorkspace two original"); err != nil {
+		t.Fatalf("WriteLongTerm(workspaceTwo) error = %v", err)
+	}
+
+	registry := &AgentRegistry{
+		agents: map[string]*AgentInstance{
+			"main":   {ID: "main", Workspace: workspaceOne},
+			"helper": {ID: "helper", Workspace: workspaceTwo},
+		},
+	}
+	loop := &AgentLoop{registry: registry}
+
+	originalWriteFileAtomic := runtimeMemoryBackupWriteFileAtomic
+	runtimeMemoryBackupWriteFileAtomic = func(path string, data []byte, perm os.FileMode) error {
+		if strings.HasSuffix(path, filepath.Join("state", "memory", "proposals.json")) && strings.HasPrefix(path, filepath.Clean(workspaceTwo)+string(filepath.Separator)) {
+			return errors.New("simulated workspace two proposal write failure")
+		}
+		return originalWriteFileAtomic(path, data, perm)
+	}
+	defer func() {
+		runtimeMemoryBackupWriteFileAtomic = originalWriteFileAtomic
+	}()
+
+	backup := RuntimeMemoryBackup{
+		Version:     runtimeMemoryBackupVersion,
+		GeneratedAt: time.Now().UnixMilli(),
+		Workspaces: []RuntimeMemoryBackupWorkspace{
+			{
+				OwnerAgentID: "main",
+				Workspace:    workspaceOne,
+				Scopes: []RuntimeMemoryBackupScope{
+					{
+						Scope:           "shared",
+						LongTermContent: "## Shared\n\nWorkspace one replacement",
+					},
+				},
+				Proposals: []MemoryProposal{
+					{
+						ID:        "memory-11",
+						Scope:     "shared",
+						Domain:    "shared_team",
+						Target:    "long_term",
+						Kind:      "task_result",
+						EntryType: "fact",
+						Status:    "pending",
+						Title:     "Workspace one replacement proposal",
+						Content:   "Workspace one replacement proposal",
+						Created:   111,
+					},
+				},
+			},
+			{
+				OwnerAgentID: "helper",
+				Workspace:    workspaceTwo,
+				Scopes: []RuntimeMemoryBackupScope{
+					{
+						Scope:           "shared",
+						LongTermContent: "## Shared\n\nWorkspace two replacement",
+					},
+				},
+				Proposals: []MemoryProposal{
+					{
+						ID:        "memory-22",
+						Scope:     "shared",
+						Domain:    "shared_team",
+						Target:    "long_term",
+						Kind:      "task_result",
+						EntryType: "fact",
+						Status:    "pending",
+						Title:     "Workspace two replacement proposal",
+						Content:   "Workspace two replacement proposal",
+						Created:   222,
+					},
+				},
+			},
+		},
+	}
+	payload, err := json.Marshal(backup)
+	if err != nil {
+		t.Fatalf("Marshal(backup) error = %v", err)
+	}
+
+	if _, err := loop.RestoreRuntimeMemoryBackup(payload, "replace"); err == nil {
+		t.Fatal("RestoreRuntimeMemoryBackup(replace) error = nil, want failure")
+	}
+
+	if got := NewMemoryStoreForScope(workspaceOne, "shared").ReadLongTerm(); !strings.Contains(got, "Workspace one original") {
+		t.Fatalf("workspace one was not rolled back: %q", got)
+	}
+	if got := NewMemoryStoreForScope(workspaceTwo, "shared").ReadLongTerm(); !strings.Contains(got, "Workspace two original") {
+		t.Fatalf("workspace two was not rolled back: %q", got)
+	}
+	if proposals := NewMemoryProposalStore(workspaceOne).ListCopies(); len(proposals) != 0 {
+		t.Fatalf("workspace one proposals mutated after later failure: %#v", proposals)
 	}
 }

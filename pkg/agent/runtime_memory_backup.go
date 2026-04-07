@@ -80,6 +80,14 @@ type runtimeMemoryBackupFileSnapshot struct {
 	dirPerm os.FileMode
 }
 
+type runtimeMemoryBackupWorkspaceRestoreState struct {
+	memoryRoot       string
+	backupRoot       string
+	hadExistingRoot  bool
+	proposalSnapshot runtimeMemoryBackupFileSnapshot
+	catalogSnapshot  runtimeMemoryBackupFileSnapshot
+}
+
 func (al *AgentLoop) ExportRuntimeMemoryBackup(format string) ([]byte, string, string, error) {
 	format = strings.ToLower(strings.TrimSpace(format))
 	if format == "" {
@@ -222,8 +230,21 @@ func (al *AgentLoop) RestoreRuntimeMemoryBackup(payload []byte, mode string) (Ru
 		}
 	}
 	if mode == "replace" {
+		appliedStates := make([]runtimeMemoryBackupWorkspaceRestoreState, 0, len(backup.Workspaces))
 		for i, workspaceBackup := range backup.Workspaces {
-			if err := restoreRuntimeMemoryBackupWorkspace(validatedWorkspaces[i], workspaceBackup); err != nil {
+			restoreState, err := restoreRuntimeMemoryBackupWorkspace(validatedWorkspaces[i], workspaceBackup)
+			if err != nil {
+				for j := len(appliedStates) - 1; j >= 0; j-- {
+					if rollbackErr := runtimeMemoryBackupRollbackWorkspaceRestoreState(appliedStates[j]); rollbackErr != nil {
+						err = errors.Join(err, rollbackErr)
+					}
+				}
+				return RuntimeMemoryBackupRestoreResult{}, err
+			}
+			appliedStates = append(appliedStates, restoreState)
+		}
+		for _, state := range appliedStates {
+			if err := runtimeMemoryBackupFinalizeWorkspaceRestore(state); err != nil {
 				return RuntimeMemoryBackupRestoreResult{}, err
 			}
 		}
@@ -285,60 +306,66 @@ func validateRuntimeMemoryBackupWorkspace(workspacePath string, workspace Runtim
 			return fmt.Errorf("%w: scopes %q and %q resolve to the same memory path %q", ErrRuntimeMemoryBackupInvalid, existingScope, scope.Scope, scopePath)
 		}
 		scopeDestinations[scopePath] = scope.Scope
+		seenNotes := make(map[string]struct{}, len(scope.DailyNotes))
 		for _, note := range scope.DailyNotes {
 			if !runtimeMemoryBackupDailyNotePathOK(note.RelativePath) {
 				return fmt.Errorf("%w: invalid daily note path %q", ErrRuntimeMemoryBackupInvalid, note.RelativePath)
 			}
+			canonicalNotePath := filepath.ToSlash(filepath.Clean(filepath.FromSlash(note.RelativePath)))
+			if _, ok := seenNotes[canonicalNotePath]; ok {
+				return fmt.Errorf("%w: duplicate daily note path %q in scope %q", ErrRuntimeMemoryBackupInvalid, note.RelativePath, scope.Scope)
+			}
+			seenNotes[canonicalNotePath] = struct{}{}
 		}
 	}
 	return nil
 }
 
-func restoreRuntimeMemoryBackupWorkspace(workspace string, backup RuntimeMemoryBackupWorkspace) error {
+func restoreRuntimeMemoryBackupWorkspace(workspace string, backup RuntimeMemoryBackupWorkspace) (runtimeMemoryBackupWorkspaceRestoreState, error) {
 	memoryRoot := filepath.Join(workspace, "memory")
 	proposalStateFile := filepath.Join(workspace, "state", "memory", "proposals.json")
 	catalogStateFile := filepath.Join(workspace, "state", "memory", "catalog_state.json")
 	proposalSnapshot, err := runtimeMemoryBackupCaptureFile(proposalStateFile)
 	if err != nil {
-		return err
+		return runtimeMemoryBackupWorkspaceRestoreState{}, err
 	}
 	catalogSnapshot, err := runtimeMemoryBackupCaptureFile(catalogStateFile)
 	if err != nil {
-		return err
+		return runtimeMemoryBackupWorkspaceRestoreState{}, err
 	}
 	stagingRoot, err := os.MkdirTemp(workspace, ".memory-restore-*")
 	if err != nil {
-		return err
+		return runtimeMemoryBackupWorkspaceRestoreState{}, err
 	}
 	defer os.RemoveAll(stagingRoot)
 
 	stagingWorkspace := filepath.Join(stagingRoot, "workspace")
 	stagedMemoryRoot := filepath.Join(stagingWorkspace, "memory")
 	if err := os.MkdirAll(stagedMemoryRoot, 0o755); err != nil {
-		return err
+		return runtimeMemoryBackupWorkspaceRestoreState{}, err
 	}
 	for _, scopeBackup := range backup.Scopes {
 		mem := NewMemoryStoreForScope(stagingWorkspace, scopeBackup.Scope)
 		if !runtimeMemoryBackupPathWithinRoot(stagedMemoryRoot, mem.LongTermPath()) {
-			return fmt.Errorf("%w: scope %q resolves outside memory root %q", ErrRuntimeMemoryBackupInvalid, scopeBackup.Scope, stagedMemoryRoot)
+			return runtimeMemoryBackupWorkspaceRestoreState{}, fmt.Errorf("%w: scope %q resolves outside memory root %q", ErrRuntimeMemoryBackupInvalid, scopeBackup.Scope, stagedMemoryRoot)
 		}
 		if err := runtimeMemoryBackupWriteLongTerm(mem, scopeBackup.LongTermContent); err != nil {
-			return err
+			return runtimeMemoryBackupWorkspaceRestoreState{}, err
 		}
 		for _, note := range scopeBackup.DailyNotes {
 			relPath := filepath.FromSlash(note.RelativePath)
 			notePath := filepath.Join(mem.memoryDir, relPath)
 			if !runtimeMemoryBackupDailyNotePathOK(note.RelativePath) {
-				return fmt.Errorf("%w: invalid daily note path %q", ErrRuntimeMemoryBackupInvalid, note.RelativePath)
+				return runtimeMemoryBackupWorkspaceRestoreState{}, fmt.Errorf("%w: invalid daily note path %q", ErrRuntimeMemoryBackupInvalid, note.RelativePath)
 			}
 			if !runtimeMemoryBackupPathWithinRoot(mem.memoryDir, notePath) {
-				return fmt.Errorf("%w: daily note %q resolves outside scope memory root", ErrRuntimeMemoryBackupInvalid, note.RelativePath)
+				return runtimeMemoryBackupWorkspaceRestoreState{}, fmt.Errorf("%w: daily note %q resolves outside scope memory root", ErrRuntimeMemoryBackupInvalid, note.RelativePath)
 			}
 			if err := os.MkdirAll(filepath.Dir(notePath), 0o755); err != nil {
-				return err
+				return runtimeMemoryBackupWorkspaceRestoreState{}, err
 			}
 			if err := runtimeMemoryBackupWriteFileAtomic(notePath, []byte(note.Content), 0o600); err != nil {
-				return err
+				return runtimeMemoryBackupWorkspaceRestoreState{}, err
 			}
 		}
 	}
@@ -347,34 +374,35 @@ func restoreRuntimeMemoryBackupWorkspace(workspace string, backup RuntimeMemoryB
 	if _, err := os.Stat(memoryRoot); err == nil {
 		hadExistingRoot = true
 		if err := os.Rename(memoryRoot, backupRoot); err != nil {
-			return err
+			return runtimeMemoryBackupWorkspaceRestoreState{}, err
 		}
 	}
 	if err := os.Rename(stagedMemoryRoot, memoryRoot); err != nil {
 		if hadExistingRoot {
 			_ = os.Rename(backupRoot, memoryRoot)
 		}
-		return err
+		return runtimeMemoryBackupWorkspaceRestoreState{}, err
 	}
 
 	if err := persistRuntimeMemoryProposalBackup(workspace, backup.Proposals); err != nil {
 		if rollbackErr := runtimeMemoryBackupRollbackWorkspaceRestore(memoryRoot, backupRoot, hadExistingRoot, proposalSnapshot, catalogSnapshot); rollbackErr != nil {
-			return errors.Join(err, rollbackErr)
+			return runtimeMemoryBackupWorkspaceRestoreState{}, errors.Join(err, rollbackErr)
 		}
-		return err
+		return runtimeMemoryBackupWorkspaceRestoreState{}, err
 	}
 	if err := persistRuntimeMemoryCatalogStateBackup(workspace, backup.LifecycleEntries); err != nil {
 		if rollbackErr := runtimeMemoryBackupRollbackWorkspaceRestore(memoryRoot, backupRoot, hadExistingRoot, proposalSnapshot, catalogSnapshot); rollbackErr != nil {
-			return errors.Join(err, rollbackErr)
+			return runtimeMemoryBackupWorkspaceRestoreState{}, errors.Join(err, rollbackErr)
 		}
-		return err
+		return runtimeMemoryBackupWorkspaceRestoreState{}, err
 	}
-	if hadExistingRoot {
-		if err := os.RemoveAll(backupRoot); err != nil {
-			return err
-		}
-	}
-	return nil
+	return runtimeMemoryBackupWorkspaceRestoreState{
+		memoryRoot:       memoryRoot,
+		backupRoot:       backupRoot,
+		hadExistingRoot:  hadExistingRoot,
+		proposalSnapshot: proposalSnapshot,
+		catalogSnapshot:  catalogSnapshot,
+	}, nil
 }
 
 func persistRuntimeMemoryProposalBackup(workspace string, proposals []MemoryProposal) error {
@@ -510,6 +538,26 @@ func runtimeMemoryBackupRollbackWorkspaceRestore(
 	}
 	if len(errs) > 0 {
 		return fmt.Errorf("rollback runtime memory backup restore: %s", strings.Join(errs, "; "))
+	}
+	return nil
+}
+
+func runtimeMemoryBackupRollbackWorkspaceRestoreState(state runtimeMemoryBackupWorkspaceRestoreState) error {
+	return runtimeMemoryBackupRollbackWorkspaceRestore(
+		state.memoryRoot,
+		state.backupRoot,
+		state.hadExistingRoot,
+		state.proposalSnapshot,
+		state.catalogSnapshot,
+	)
+}
+
+func runtimeMemoryBackupFinalizeWorkspaceRestore(state runtimeMemoryBackupWorkspaceRestoreState) error {
+	if !state.hadExistingRoot {
+		return nil
+	}
+	if err := os.RemoveAll(state.backupRoot); err != nil {
+		return err
 	}
 	return nil
 }
