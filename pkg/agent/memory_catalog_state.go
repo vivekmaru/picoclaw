@@ -91,7 +91,7 @@ func (s *runtimeMemoryCatalogStateStore) apply(entry *RuntimeMemoryEntryInfo) {
 func (s *runtimeMemoryCatalogStateStore) setPinned(id string, pinned bool, actor string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.loadErr != nil {
+	if err := s.retryLoadLocked(); err != nil {
 		return fmt.Errorf("load memory catalog state: %w", s.loadErr)
 	}
 	return s.updateEntryLocked(id, func(entry *runtimeMemoryCatalogEntryState) {
@@ -109,7 +109,7 @@ func (s *runtimeMemoryCatalogStateStore) setPinned(id string, pinned bool, actor
 func (s *runtimeMemoryCatalogStateStore) setArchived(id string, archived bool, actor string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.loadErr != nil {
+	if err := s.retryLoadLocked(); err != nil {
 		return fmt.Errorf("load memory catalog state: %w", s.loadErr)
 	}
 	return s.updateEntryLocked(id, func(entry *runtimeMemoryCatalogEntryState) {
@@ -149,6 +149,23 @@ func (s *runtimeMemoryCatalogStateStore) updateEntryLocked(id string, update fun
 		}
 		return err
 	}
+	return nil
+}
+
+func (s *runtimeMemoryCatalogStateStore) retryLoadLocked() error {
+	if s.loadErr == nil {
+		return nil
+	}
+	reloaded := make(map[string]*runtimeMemoryCatalogEntryState)
+	originalEntries := s.entries
+	s.entries = reloaded
+	err := s.load()
+	if err != nil {
+		s.entries = originalEntries
+		s.loadErr = err
+		return err
+	}
+	s.loadErr = nil
 	return nil
 }
 

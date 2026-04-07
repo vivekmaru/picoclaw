@@ -337,6 +337,42 @@ func TestRuntimeMemoryCatalogStateStoreLoadFailureBlocksMutation(t *testing.T) {
 	}
 }
 
+func TestRuntimeMemoryCatalogStateStoreRetriesLoadAfterTransientFailure(t *testing.T) {
+	workspace := t.TempDir()
+	stateFile := filepath.Join(workspace, "state", "memory", "catalog_state.json")
+	if err := os.MkdirAll(filepath.Dir(stateFile), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(stateFile, []byte("{not-json"), 0o600); err != nil {
+		t.Fatalf("WriteFile(invalid) error = %v", err)
+	}
+
+	store := getRuntimeMemoryCatalogStateStore(workspace)
+	if store.loadErr == nil {
+		t.Fatal("expected loadErr for invalid catalog_state.json")
+	}
+
+	validState := `{"version":1,"entries":[{"id":"memory-existing","pinned":true,"pinned_at":123,"pinned_by":"launcher"}]}`
+	if err := os.WriteFile(stateFile, []byte(validState), 0o600); err != nil {
+		t.Fatalf("WriteFile(valid) error = %v", err)
+	}
+
+	if err := store.setArchived("memory-new", true, "operator"); err != nil {
+		t.Fatalf("setArchived() after fixing state file error = %v", err)
+	}
+	if store.loadErr != nil {
+		t.Fatalf("expected loadErr to clear after successful reload, got %v", store.loadErr)
+	}
+	existing, ok := store.getCopy("memory-existing")
+	if !ok || !existing.Pinned {
+		t.Fatalf("expected existing pinned entry to survive reload, got %#v ok=%v", existing, ok)
+	}
+	created, ok := store.getCopy("memory-new")
+	if !ok || !created.Archived {
+		t.Fatalf("expected new archived entry after recovered mutation, got %#v ok=%v", created, ok)
+	}
+}
+
 func TestRuntimeMemoryCatalogStateStorePersistFailureRollsBackMutation(t *testing.T) {
 	workspace := t.TempDir()
 	stateDir := filepath.Join(workspace, "state", "memory", "catalog_state.json")
