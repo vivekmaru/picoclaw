@@ -89,6 +89,8 @@ catalog. That catalog:
 - parses reviewed memory entries back into structured records
 - preserves legacy free-form `MEMORY.md` content as legacy catalog entries
 - can be exported from the launcher as Markdown or JSON for backup and audit
+- tracks reversible lifecycle state such as pinning and archiving under
+  `workspace/state/memory/catalog_state.json`
 
 Delegation state now also persists under `workspace/state/subagents/<agent-id>/`.
 Tracked tasks can form explicit parent/child handoff chains, so the launcher

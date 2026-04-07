@@ -14,6 +14,7 @@ import (
 const gatewayRuntimePath = "/runtime/agent"
 const gatewayRuntimeMemoryCatalogPath = "/runtime/agent/memory-catalog"
 const gatewayRuntimeMemoryCatalogExportPath = "/runtime/agent/memory-catalog/export"
+const gatewayRuntimeMemoryCatalogEntriesPrefix = "/runtime/agent/memory-catalog/entries/"
 const gatewayRuntimeTasksPrefix = "/runtime/agent/tasks/"
 const gatewayRuntimeMemoryProposalsPrefix = "/runtime/agent/memory-proposals/"
 
@@ -44,6 +45,10 @@ type runtimeMemoryProposalUpdateRequest struct {
 	Title      string `json:"title"`
 	Content    string `json:"content"`
 	Confidence string `json:"confidence"`
+}
+
+type runtimeMemoryCatalogActionRequest struct {
+	Actor string `json:"actor"`
 }
 
 func registerRuntimeHTTPHandlers(agentLoop *agent.AgentLoop, channelManager httpHandlerRegistrar, authToken string) {
@@ -105,6 +110,50 @@ func registerRuntimeHTTPHandlers(agentLoop *agent.AgentLoop, channelManager http
 		w.Header().Set("Content-Type", contentType)
 		w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
 		_, _ = w.Write(content)
+	})
+
+	channelManager.RegisterHTTPHandlerFunc(gatewayRuntimeMemoryCatalogEntriesPrefix, func(w http.ResponseWriter, r *http.Request) {
+		if !authorizedGatewayRuntimeRequest(r, authToken) {
+			writeGatewayRuntimeError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		entryID, action, ok := parseGatewayRuntimeMemoryCatalogEntryPath(r.URL.Path)
+		if !ok {
+			writeGatewayRuntimeError(w, http.StatusNotFound, "not found")
+			return
+		}
+		if r.Method != http.MethodPost {
+			writeGatewayRuntimeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		var req runtimeMemoryCatalogActionRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+			writeGatewayRuntimeError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+		var (
+			entry agent.RuntimeMemoryEntryInfo
+			err   error
+		)
+		switch action {
+		case "pin":
+			entry, err = agentLoop.PinRuntimeMemoryCatalogEntry(entryID, req.Actor)
+		case "unpin":
+			entry, err = agentLoop.UnpinRuntimeMemoryCatalogEntry(entryID, req.Actor)
+		case "archive":
+			entry, err = agentLoop.ArchiveRuntimeMemoryCatalogEntry(entryID, req.Actor)
+		case "restore":
+			entry, err = agentLoop.RestoreRuntimeMemoryCatalogEntry(entryID, req.Actor)
+		default:
+			writeGatewayRuntimeError(w, http.StatusNotFound, "not found")
+			return
+		}
+		if err != nil {
+			writeGatewayRuntimeTaskError(w, err)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(entry)
 	})
 
 	channelManager.RegisterHTTPHandlerFunc(gatewayRuntimeTasksPrefix, func(w http.ResponseWriter, r *http.Request) {
@@ -319,8 +368,22 @@ func parseGatewayRuntimeMemoryProposalPath(path string) (ownerAgentID, proposalI
 	return parts[0], parts[1], parts[2], true
 }
 
+func parseGatewayRuntimeMemoryCatalogEntryPath(path string) (entryID, action string, ok bool) {
+	trimmed := strings.TrimPrefix(path, gatewayRuntimeMemoryCatalogEntriesPrefix)
+	if trimmed == path {
+		return "", "", false
+	}
+	parts := strings.Split(strings.Trim(trimmed, "/"), "/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return "", "", false
+	}
+	return parts[0], parts[1], true
+}
+
 func writeGatewayRuntimeTaskError(w http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, agent.ErrRuntimeMemoryCatalogEntryNotFound):
+		writeGatewayRuntimeError(w, http.StatusNotFound, err.Error())
 	case errors.Is(err, agent.ErrRuntimeTaskNotFound):
 		writeGatewayRuntimeError(w, http.StatusNotFound, err.Error())
 	case errors.Is(err, agent.ErrRuntimeTaskNotCancelable):

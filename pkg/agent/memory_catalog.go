@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +15,7 @@ import (
 )
 
 var ErrRuntimeMemoryCatalogInvalid = errors.New("runtime memory catalog invalid")
+var ErrRuntimeMemoryCatalogEntryNotFound = errors.New("runtime memory catalog entry not found")
 
 type RuntimeMemoryCatalog struct {
 	GeneratedAt int64                     `json:"generated_at"`
@@ -24,6 +27,8 @@ type RuntimeMemoryCatalog struct {
 type RuntimeMemoryCatalogStats struct {
 	ScopeCount       int            `json:"scope_count"`
 	EntryCount       int            `json:"entry_count"`
+	PinnedCount      int            `json:"pinned_count"`
+	ArchivedCount    int            `json:"archived_count"`
 	DomainCounts     map[string]int `json:"domain_counts,omitempty"`
 	EntryTypeCounts  map[string]int `json:"entry_type_counts,omitempty"`
 	WorkspaceCount   int            `json:"workspace_count"`
@@ -57,6 +62,12 @@ type RuntimeMemoryEntryInfo struct {
 	SourceTaskID     string `json:"source_task_id,omitempty"`
 	SourceTeammateID string `json:"source_teammate_id,omitempty"`
 	ReviewedBy       string `json:"reviewed_by,omitempty"`
+	Pinned           bool   `json:"pinned,omitempty"`
+	PinnedAt         int64  `json:"pinned_at,omitempty"`
+	PinnedBy         string `json:"pinned_by,omitempty"`
+	Archived         bool   `json:"archived,omitempty"`
+	ArchivedAt       int64  `json:"archived_at,omitempty"`
+	ArchivedBy       string `json:"archived_by,omitempty"`
 	Legacy           bool   `json:"legacy,omitempty"`
 }
 
@@ -104,7 +115,11 @@ func (al *AgentLoop) GetRuntimeMemoryCatalog() RuntimeMemoryCatalog {
 			content := strings.TrimSpace(mem.ReadLongTerm())
 			scopeInfo.HasLongTerm = content != ""
 			if content != "" {
+				stateStore := getRuntimeMemoryCatalogStateStore(ref.Workspace)
 				entries := parseRuntimeMemoryCatalogEntries(ref.OwnerAgentID, ref.Workspace, mem, content)
+				for i := range entries {
+					stateStore.apply(&entries[i])
+				}
 				scopeInfo.EntryCount = len(entries)
 				catalog.Entries = append(catalog.Entries, entries...)
 				catalog.Summary.WorkspaceEntries[ref.Workspace] += len(entries)
@@ -114,6 +129,12 @@ func (al *AgentLoop) GetRuntimeMemoryCatalog() RuntimeMemoryCatalog {
 					}
 					if entryType := strings.TrimSpace(entry.EntryType); entryType != "" {
 						catalog.Summary.EntryTypeCounts[entryType]++
+					}
+					if entry.Pinned {
+						catalog.Summary.PinnedCount++
+					}
+					if entry.Archived {
+						catalog.Summary.ArchivedCount++
 					}
 				}
 			}
@@ -143,6 +164,12 @@ func (al *AgentLoop) GetRuntimeMemoryCatalog() RuntimeMemoryCatalog {
 		}
 		if a.AddedAt != b.AddedAt {
 			if a.AddedAt < b.AddedAt {
+				return -1
+			}
+			return 1
+		}
+		if a.Pinned != b.Pinned {
+			if a.Pinned {
 				return -1
 			}
 			return 1
@@ -372,9 +399,19 @@ func parseRuntimeMemoryCatalogEntries(ownerAgentID, workspace string, mem *Memor
 	}
 
 	entries := make([]RuntimeMemoryEntryInfo, 0, len(parsed))
-	for idx, section := range parsed {
+	baseIDs := make([]string, len(parsed))
+	baseIDCounts := make(map[string]int, len(parsed))
+	for i, section := range parsed {
+		baseID := runtimeMemoryCatalogEntryBaseID(workspace, mem.LongTermPath(), section)
+		baseIDs[i] = baseID
+		baseIDCounts[baseID]++
+	}
+	baseIDSeen := make(map[string]int, len(baseIDCounts))
+	for i, section := range parsed {
+		baseID := baseIDs[i]
+		baseIDSeen[baseID]++
 		entry := RuntimeMemoryEntryInfo{
-			ID:               fmt.Sprintf("%s:%s:%d", ownerAgentID, mem.Scope(), idx+1),
+			ID:               runtimeMemoryCatalogEntryID(baseID, baseIDSeen[baseID], baseIDCounts[baseID]),
 			OwnerAgentID:     ownerAgentID,
 			Workspace:        workspace,
 			Scope:            mem.Scope(),
@@ -401,6 +438,33 @@ func parseRuntimeMemoryCatalogEntries(ownerAgentID, workspace string, mem *Memor
 		entries = append(entries, entry)
 	}
 	return entries
+}
+
+func runtimeMemoryCatalogEntryBaseID(
+	workspace, sourcePath string,
+	section runtimeMemoryParsedSection,
+) string {
+	sum := sha256.Sum256([]byte(strings.Join([]string{
+		workspace,
+		sourcePath,
+		section.Title,
+		section.Content,
+		section.Domain,
+		section.EntryType,
+		section.Confidence,
+		section.AddedAtDisplay,
+		section.SourceTaskID,
+		section.SourceTeammate,
+		section.ReviewedBy,
+	}, "\x00")))
+	return "memory-" + hex.EncodeToString(sum[:12])
+}
+
+func runtimeMemoryCatalogEntryID(baseID string, occurrence, total int) string {
+	if total <= 1 {
+		return baseID
+	}
+	return fmt.Sprintf("%s-dup-%d", baseID, occurrence)
 }
 
 type runtimeMemoryCatalogSection struct {

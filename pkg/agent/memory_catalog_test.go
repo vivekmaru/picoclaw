@@ -3,6 +3,8 @@ package agent
 import (
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -98,6 +100,405 @@ func TestAgentLoop_GetRuntimeMemoryCatalog(t *testing.T) {
 	}
 	if !foundTeammateEntry {
 		t.Fatal("expected teammate memory entry in catalog")
+	}
+}
+
+func TestAgentLoop_MemoryCatalogLifecycleActions(t *testing.T) {
+	workspace := t.TempDir()
+	store := NewMemoryProposalStore(workspace)
+	proposal, err := store.Create(MemoryProposalRequest{
+		Scope:     "shared",
+		Domain:    "shared_team",
+		Target:    "long_term",
+		Kind:      "task_result",
+		EntryType: "fact",
+		Title:     "Lifecycle entry",
+		Content:   "This entry should be pinnable and archivable.",
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if _, err := store.Approve(proposal.ID, "launcher", ""); err != nil {
+		t.Fatalf("Approve() error = %v", err)
+	}
+
+	loop := &AgentLoop{registry: &AgentRegistry{
+		agents: map[string]*AgentInstance{
+			"main": {ID: "main", Workspace: workspace},
+		},
+	}}
+	initial := loop.GetRuntimeMemoryCatalog()
+	if len(initial.Entries) != 1 {
+		t.Fatalf("len(initial.Entries) = %d, want 1", len(initial.Entries))
+	}
+	entryID := initial.Entries[0].ID
+	if entryID == "" {
+		t.Fatal("expected stable entry ID")
+	}
+
+	pinned, err := loop.PinRuntimeMemoryCatalogEntry(entryID, "operator")
+	if err != nil {
+		t.Fatalf("PinRuntimeMemoryCatalogEntry() error = %v", err)
+	}
+	if !pinned.Pinned || pinned.PinnedBy != "operator" {
+		t.Fatalf("pinned lifecycle = %#v", pinned)
+	}
+
+	archived, err := loop.ArchiveRuntimeMemoryCatalogEntry(entryID, "operator")
+	if err != nil {
+		t.Fatalf("ArchiveRuntimeMemoryCatalogEntry() error = %v", err)
+	}
+	if !archived.Archived || archived.ArchivedBy != "operator" {
+		t.Fatalf("archived lifecycle = %#v", archived)
+	}
+
+	catalog := loop.GetRuntimeMemoryCatalog()
+	if catalog.Summary.PinnedCount != 1 {
+		t.Fatalf("PinnedCount = %d, want 1", catalog.Summary.PinnedCount)
+	}
+	if catalog.Summary.ArchivedCount != 1 {
+		t.Fatalf("ArchivedCount = %d, want 1", catalog.Summary.ArchivedCount)
+	}
+	if len(catalog.Entries) != 1 || catalog.Entries[0].ID != entryID {
+		t.Fatalf("catalog entry IDs changed unexpectedly: %#v", catalog.Entries)
+	}
+
+	restored, err := loop.RestoreRuntimeMemoryCatalogEntry(entryID, "launcher")
+	if err != nil {
+		t.Fatalf("RestoreRuntimeMemoryCatalogEntry() error = %v", err)
+	}
+	if restored.Archived {
+		t.Fatalf("expected restored entry to clear archived flag: %#v", restored)
+	}
+	unpinned, err := loop.UnpinRuntimeMemoryCatalogEntry(entryID, "launcher")
+	if err != nil {
+		t.Fatalf("UnpinRuntimeMemoryCatalogEntry() error = %v", err)
+	}
+	if unpinned.Pinned {
+		t.Fatalf("expected unpinned entry to clear pinned flag: %#v", unpinned)
+	}
+}
+
+func TestAgentLoop_MemoryCatalogEntryIDsRemainStableWhenEarlierEntriesShift(t *testing.T) {
+	workspace := t.TempDir()
+	mem := NewMemoryStoreForScope(workspace, "shared")
+	baseContent := strings.Join([]string{
+		"## First Entry",
+		"",
+		"- Added: 2026-04-07 10:00:00 UTC",
+		"- Domain: shared_team",
+		"",
+		"First body",
+		"",
+		"## Stable Target",
+		"",
+		"- Added: 2026-04-07 11:00:00 UTC",
+		"- Domain: shared_team",
+		"",
+		"Target body",
+	}, "\n")
+	if err := mem.WriteLongTerm(baseContent); err != nil {
+		t.Fatalf("WriteLongTerm(baseContent) error = %v", err)
+	}
+
+	loop := &AgentLoop{registry: &AgentRegistry{
+		agents: map[string]*AgentInstance{
+			"main": {ID: "main", Workspace: workspace},
+		},
+	}}
+	before := loop.GetRuntimeMemoryCatalog()
+	idsBefore := map[string]string{}
+	for _, entry := range before.Entries {
+		idsBefore[entry.Title] = entry.ID
+	}
+
+	updatedContent := strings.Join([]string{
+		"## Prepended Entry",
+		"",
+		"- Added: 2026-04-07 09:30:00 UTC",
+		"- Domain: shared_team",
+		"",
+		"Prepended body",
+		"",
+		baseContent,
+	}, "\n")
+	if err := mem.WriteLongTerm(updatedContent); err != nil {
+		t.Fatalf("WriteLongTerm(updatedContent) error = %v", err)
+	}
+
+	after := loop.GetRuntimeMemoryCatalog()
+	idsAfter := map[string]string{}
+	for _, entry := range after.Entries {
+		idsAfter[entry.Title] = entry.ID
+	}
+
+	if idsBefore["Stable Target"] == "" || idsAfter["Stable Target"] == "" {
+		t.Fatalf("missing stable target IDs before=%q after=%q", idsBefore["Stable Target"], idsAfter["Stable Target"])
+	}
+	if idsBefore["Stable Target"] != idsAfter["Stable Target"] {
+		t.Fatalf("stable target ID changed: before=%q after=%q", idsBefore["Stable Target"], idsAfter["Stable Target"])
+	}
+}
+
+func TestAgentLoop_MemoryCatalogEntryIDsRemainStableWhenOwnerAgentChanges(t *testing.T) {
+	workspace := t.TempDir()
+	mem := NewMemoryStoreForScope(workspace, "shared")
+	content := strings.Join([]string{
+		"## Stable Target",
+		"",
+		"- Added: 2026-04-07 11:00:00 UTC",
+		"- Domain: shared_team",
+		"",
+		"Target body",
+	}, "\n")
+	if err := mem.WriteLongTerm(content); err != nil {
+		t.Fatalf("WriteLongTerm() error = %v", err)
+	}
+
+	firstLoop := &AgentLoop{registry: &AgentRegistry{
+		agents: map[string]*AgentInstance{
+			"zeta": {ID: "zeta", Workspace: workspace},
+		},
+	}}
+	firstCatalog := firstLoop.GetRuntimeMemoryCatalog()
+	if len(firstCatalog.Entries) != 1 {
+		t.Fatalf("len(firstCatalog.Entries) = %d, want 1", len(firstCatalog.Entries))
+	}
+
+	secondLoop := &AgentLoop{registry: &AgentRegistry{
+		agents: map[string]*AgentInstance{
+			"alpha": {ID: "alpha", Workspace: workspace},
+		},
+	}}
+	secondCatalog := secondLoop.GetRuntimeMemoryCatalog()
+	if len(secondCatalog.Entries) != 1 {
+		t.Fatalf("len(secondCatalog.Entries) = %d, want 1", len(secondCatalog.Entries))
+	}
+
+	if firstCatalog.Entries[0].OwnerAgentID == secondCatalog.Entries[0].OwnerAgentID {
+		t.Fatalf("expected owner agent to change, got %q", firstCatalog.Entries[0].OwnerAgentID)
+	}
+	if firstCatalog.Entries[0].ID != secondCatalog.Entries[0].ID {
+		t.Fatalf("stable target ID changed after owner switch: before=%q after=%q", firstCatalog.Entries[0].ID, secondCatalog.Entries[0].ID)
+	}
+}
+
+func TestRuntimeMemoryCatalogStateStoreSharedByWorkspace(t *testing.T) {
+	workspace := t.TempDir()
+	first := getRuntimeMemoryCatalogStateStore(workspace)
+	second := getRuntimeMemoryCatalogStateStore(workspace)
+	if first != second {
+		t.Fatal("expected workspace state store to be shared")
+	}
+
+	if err := first.setPinned("memory-a", true, "operator"); err != nil {
+		t.Fatalf("setPinned() error = %v", err)
+	}
+	if err := second.setArchived("memory-b", true, "operator"); err != nil {
+		t.Fatalf("setArchived() error = %v", err)
+	}
+	if _, ok := first.getCopy("memory-b"); !ok {
+		t.Fatal("expected first store to observe archive written by second store")
+	}
+	if _, ok := second.getCopy("memory-a"); !ok {
+		t.Fatal("expected second store to observe pin written by first store")
+	}
+}
+
+func TestRuntimeMemoryCatalogStateStoreLoadFailureBlocksMutation(t *testing.T) {
+	workspace := t.TempDir()
+	stateFile := filepath.Join(workspace, "state", "memory", "catalog_state.json")
+	if err := os.MkdirAll(filepath.Dir(stateFile), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(stateFile, []byte("{not-json"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	store := getRuntimeMemoryCatalogStateStore(workspace)
+	if store.loadErr == nil {
+		t.Fatal("expected loadErr for invalid catalog_state.json")
+	}
+	if err := store.setPinned("memory-a", true, "operator"); err == nil {
+		t.Fatal("expected setPinned() to fail when state file load fails")
+	}
+	if err := store.setArchived("memory-a", true, "operator"); err == nil {
+		t.Fatal("expected setArchived() to fail when state file load fails")
+	}
+	if _, ok := store.getCopy("memory-a"); ok {
+		t.Fatal("unexpected lifecycle state mutation after load failure")
+	}
+	data, err := os.ReadFile(stateFile)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if string(data) != "{not-json" {
+		t.Fatalf("catalog_state.json was rewritten after load failure: %q", string(data))
+	}
+}
+
+func TestRuntimeMemoryCatalogStateStoreRetriesLoadAfterTransientFailure(t *testing.T) {
+	workspace := t.TempDir()
+	stateFile := filepath.Join(workspace, "state", "memory", "catalog_state.json")
+	if err := os.MkdirAll(filepath.Dir(stateFile), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(stateFile, []byte("{not-json"), 0o600); err != nil {
+		t.Fatalf("WriteFile(invalid) error = %v", err)
+	}
+
+	store := getRuntimeMemoryCatalogStateStore(workspace)
+	if store.loadErr == nil {
+		t.Fatal("expected loadErr for invalid catalog_state.json")
+	}
+
+	validState := `{"version":1,"entries":[{"id":"memory-existing","pinned":true,"pinned_at":123,"pinned_by":"launcher"}]}`
+	if err := os.WriteFile(stateFile, []byte(validState), 0o600); err != nil {
+		t.Fatalf("WriteFile(valid) error = %v", err)
+	}
+
+	if err := store.setArchived("memory-new", true, "operator"); err != nil {
+		t.Fatalf("setArchived() after fixing state file error = %v", err)
+	}
+	if store.loadErr != nil {
+		t.Fatalf("expected loadErr to clear after successful reload, got %v", store.loadErr)
+	}
+	existing, ok := store.getCopy("memory-existing")
+	if !ok || !existing.Pinned {
+		t.Fatalf("expected existing pinned entry to survive reload, got %#v ok=%v", existing, ok)
+	}
+	created, ok := store.getCopy("memory-new")
+	if !ok || !created.Archived {
+		t.Fatalf("expected new archived entry after recovered mutation, got %#v ok=%v", created, ok)
+	}
+}
+
+func TestRuntimeMemoryCatalogStateStoreLoadCreatesDistinctEntries(t *testing.T) {
+	workspace := t.TempDir()
+	stateFile := filepath.Join(workspace, "state", "memory", "catalog_state.json")
+	if err := os.MkdirAll(filepath.Dir(stateFile), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	validState := `{"version":1,"entries":[{"id":"memory-a","pinned":true,"pinned_at":111,"pinned_by":"alice"},{"id":"memory-b","archived":true,"archived_at":222,"archived_by":"bob"}]}`
+	if err := os.WriteFile(stateFile, []byte(validState), 0o600); err != nil {
+		t.Fatalf("WriteFile(valid) error = %v", err)
+	}
+
+	store := &runtimeMemoryCatalogStateStore{
+		stateFile: stateFile,
+		entries:   make(map[string]*runtimeMemoryCatalogEntryState),
+	}
+	if err := store.load(); err != nil {
+		t.Fatalf("load() error = %v", err)
+	}
+	first, ok := store.getCopy("memory-a")
+	if !ok {
+		t.Fatal("expected first entry")
+	}
+	second, ok := store.getCopy("memory-b")
+	if !ok {
+		t.Fatal("expected second entry")
+	}
+	if !first.Pinned || first.PinnedBy != "alice" || first.Archived {
+		t.Fatalf("unexpected first entry after load: %#v", first)
+	}
+	if !second.Archived || second.ArchivedBy != "bob" || second.Pinned {
+		t.Fatalf("unexpected second entry after load: %#v", second)
+	}
+}
+
+func TestRuntimeMemoryCatalogStateStorePersistFailureRollsBackMutation(t *testing.T) {
+	workspace := t.TempDir()
+	stateDir := filepath.Join(workspace, "state", "memory", "catalog_state.json")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+
+	store := &runtimeMemoryCatalogStateStore{
+		stateFile: stateDir,
+		entries: map[string]*runtimeMemoryCatalogEntryState{
+			"memory-a": {
+				ID:       "memory-a",
+				Pinned:   true,
+				PinnedAt: 123,
+				PinnedBy: "launcher",
+			},
+		},
+	}
+
+	before, ok := store.getCopy("memory-a")
+	if !ok {
+		t.Fatal("expected seeded entry")
+	}
+	if err := store.setArchived("memory-a", true, "operator"); err == nil {
+		t.Fatal("expected setArchived() to fail when persistLocked() cannot write")
+	}
+	after, ok := store.getCopy("memory-a")
+	if !ok {
+		t.Fatal("expected seeded entry after rollback")
+	}
+	if after != before {
+		t.Fatalf("entry changed after failed persist: before=%#v after=%#v", before, after)
+	}
+
+	if err := store.setPinned("memory-b", true, "operator"); err == nil {
+		t.Fatal("expected setPinned() to fail for new entry when persistLocked() cannot write")
+	}
+	if _, ok := store.getCopy("memory-b"); ok {
+		t.Fatal("unexpected new entry retained after failed persist")
+	}
+}
+
+func TestAgentLoop_MemoryCatalogDuplicateEntriesGetDistinctLifecycleIDs(t *testing.T) {
+	workspace := t.TempDir()
+	mem := NewMemoryStoreForScope(workspace, "shared")
+	duplicate := strings.Join([]string{
+		"## Duplicate Entry",
+		"",
+		"- Added: 2026-04-07 12:00:00 UTC",
+		"- Domain: shared_team",
+		"",
+		"Same body",
+	}, "\n")
+	if err := mem.WriteLongTerm(duplicate + "\n\n" + duplicate); err != nil {
+		t.Fatalf("WriteLongTerm() error = %v", err)
+	}
+
+	loop := &AgentLoop{registry: &AgentRegistry{
+		agents: map[string]*AgentInstance{
+			"main": {ID: "main", Workspace: workspace},
+		},
+	}}
+	catalog := loop.GetRuntimeMemoryCatalog()
+	if len(catalog.Entries) != 2 {
+		t.Fatalf("len(Entries) = %d, want 2", len(catalog.Entries))
+	}
+	first := catalog.Entries[0]
+	second := catalog.Entries[1]
+	if first.ID == second.ID {
+		t.Fatalf("duplicate entries share ID %q", first.ID)
+	}
+
+	pinned, err := loop.PinRuntimeMemoryCatalogEntry(first.ID, "launcher")
+	if err != nil {
+		t.Fatalf("PinRuntimeMemoryCatalogEntry() error = %v", err)
+	}
+	if !pinned.Pinned {
+		t.Fatalf("expected pinned entry to be pinned: %#v", pinned)
+	}
+
+	updated := loop.GetRuntimeMemoryCatalog()
+	if len(updated.Entries) != 2 {
+		t.Fatalf("len(updated.Entries) = %d, want 2", len(updated.Entries))
+	}
+	var pinnedCount int
+	for _, entry := range updated.Entries {
+		if entry.Pinned {
+			pinnedCount++
+		}
+	}
+	if pinnedCount != 1 {
+		t.Fatalf("PinnedCount among duplicates = %d, want 1", pinnedCount)
 	}
 }
 
@@ -204,6 +605,38 @@ func TestAgentLoop_GetRuntimeMemoryCatalog_DeduplicatesAliasedScopesByPath(t *te
 	}
 	if got := catalog.Summary.EntryCount; got != 1 {
 		t.Fatalf("EntryCount = %d, want 1", got)
+	}
+}
+
+func TestRuntimeMemoryCatalogEntryIDsRemainStableAcrossScopeAliases(t *testing.T) {
+	workspace := t.TempDir()
+	configuredScope := "teammate:review:qa"
+	discoveredScope := "teammate:review/qa"
+	configuredStore := NewMemoryStoreForScope(workspace, configuredScope)
+	discoveredStore := NewMemoryStoreForScope(workspace, discoveredScope)
+	if configuredStore.LongTermPath() != discoveredStore.LongTermPath() {
+		t.Fatalf("expected aliased scopes to resolve to same file, got %q vs %q", configuredStore.LongTermPath(), discoveredStore.LongTermPath())
+	}
+
+	content := strings.Join([]string{
+		"## Review QA Memory",
+		"",
+		"- Added: 2026-04-06 12:00:00 UTC",
+		"- Domain: teammate_local",
+		"",
+		"One canonical entry",
+	}, "\n")
+	if err := configuredStore.WriteLongTerm(content); err != nil {
+		t.Fatalf("WriteLongTerm() error = %v", err)
+	}
+
+	configuredEntries := parseRuntimeMemoryCatalogEntries("main", workspace, configuredStore, content)
+	discoveredEntries := parseRuntimeMemoryCatalogEntries("main", workspace, discoveredStore, content)
+	if len(configuredEntries) != 1 || len(discoveredEntries) != 1 {
+		t.Fatalf("entry counts = %d/%d, want 1/1", len(configuredEntries), len(discoveredEntries))
+	}
+	if configuredEntries[0].ID != discoveredEntries[0].ID {
+		t.Fatalf("scope alias changed lifecycle ID: configured=%q discovered=%q", configuredEntries[0].ID, discoveredEntries[0].ID)
 	}
 }
 
