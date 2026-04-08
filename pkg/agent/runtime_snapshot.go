@@ -234,14 +234,21 @@ func runtimeTaskHandoffable(task tools.SubagentTask) bool {
 
 func collectRuntimeMemoryProposals(registry *AgentRegistry, agentIDs []string) []RuntimeMemoryProposalInfo {
 	proposals := make([]RuntimeMemoryProposalInfo, 0)
+	seenWorkspaces := map[string]struct{}{}
 	for _, agentID := range agentIDs {
-		agentInst, ok := registry.GetAgent(agentID)
-		if !ok || agentInst == nil || strings.TrimSpace(agentInst.Workspace) == "" {
+		workspace := runtimeMemoryProposalWorkspaceForAgent(registry, agentID)
+		if workspace == "" {
 			continue
 		}
-		store := NewMemoryProposalStore(agentInst.Workspace)
+		workspaceKey := runtimeMemoryBackupWorkspaceCollisionKey(workspace)
+		if _, exists := seenWorkspaces[workspaceKey]; exists {
+			continue
+		}
+		seenWorkspaces[workspaceKey] = struct{}{}
+
+		store := NewMemoryProposalStore(workspace)
 		for _, proposal := range store.ListCopies() {
-			proposals = append(proposals, runtimeMemoryProposalInfo(agentID, agentInst.Workspace, proposal))
+			proposals = append(proposals, runtimeMemoryProposalInfo(agentID, workspace, proposal))
 		}
 	}
 	slices.SortFunc(proposals, func(a, b RuntimeMemoryProposalInfo) int {
