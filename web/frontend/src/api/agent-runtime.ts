@@ -113,6 +113,11 @@ export interface AgentRuntimeMemoryCatalog {
     entry_type_counts?: Record<string, number>
     workspace_entries?: Record<string, number>
   }
+  filter_options?: {
+    scopes?: AgentRuntimeMemoryCatalogScope[]
+    domains?: string[]
+    entry_types?: string[]
+  }
   scopes?: AgentRuntimeMemoryCatalogScope[]
   entries?: AgentRuntimeMemoryCatalogEntry[]
 }

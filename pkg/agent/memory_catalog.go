@@ -18,10 +18,17 @@ var ErrRuntimeMemoryCatalogInvalid = errors.New("runtime memory catalog invalid"
 var ErrRuntimeMemoryCatalogEntryNotFound = errors.New("runtime memory catalog entry not found")
 
 type RuntimeMemoryCatalog struct {
-	GeneratedAt int64                     `json:"generated_at"`
-	Summary     RuntimeMemoryCatalogStats `json:"summary"`
-	Scopes      []RuntimeMemoryScopeInfo  `json:"scopes,omitempty"`
-	Entries     []RuntimeMemoryEntryInfo  `json:"entries,omitempty"`
+	GeneratedAt   int64                             `json:"generated_at"`
+	Summary       RuntimeMemoryCatalogStats         `json:"summary"`
+	FilterOptions RuntimeMemoryCatalogFilterOptions `json:"filter_options,omitempty"`
+	Scopes        []RuntimeMemoryScopeInfo          `json:"scopes,omitempty"`
+	Entries       []RuntimeMemoryEntryInfo          `json:"entries,omitempty"`
+}
+
+type RuntimeMemoryCatalogFilterOptions struct {
+	Scopes     []RuntimeMemoryScopeInfo `json:"scopes,omitempty"`
+	Domains    []string                 `json:"domains,omitempty"`
+	EntryTypes []string                 `json:"entry_types,omitempty"`
 }
 
 type RuntimeMemoryCatalogStats struct {
@@ -188,8 +195,41 @@ func (al *AgentLoop) GetRuntimeMemoryCatalog() RuntimeMemoryCatalog {
 	if len(catalog.Summary.WorkspaceEntries) == 0 {
 		catalog.Summary.WorkspaceEntries = nil
 	}
+	catalog.FilterOptions = runtimeMemoryCatalogFilterOptions(catalog.Scopes, catalog.Entries)
 
 	return catalog
+}
+
+func runtimeMemoryCatalogFilterOptions(scopes []RuntimeMemoryScopeInfo, entries []RuntimeMemoryEntryInfo) RuntimeMemoryCatalogFilterOptions {
+	options := RuntimeMemoryCatalogFilterOptions{}
+	if len(scopes) > 0 {
+		options.Scopes = append(options.Scopes, scopes...)
+	}
+	domainSet := map[string]struct{}{}
+	entryTypeSet := map[string]struct{}{}
+	for _, entry := range entries {
+		if domain := strings.TrimSpace(entry.Domain); domain != "" {
+			domainSet[domain] = struct{}{}
+		}
+		if entryType := strings.TrimSpace(entry.EntryType); entryType != "" {
+			entryTypeSet[entryType] = struct{}{}
+		}
+	}
+	if len(domainSet) > 0 {
+		options.Domains = make([]string, 0, len(domainSet))
+		for domain := range domainSet {
+			options.Domains = append(options.Domains, domain)
+		}
+		slices.Sort(options.Domains)
+	}
+	if len(entryTypeSet) > 0 {
+		options.EntryTypes = make([]string, 0, len(entryTypeSet))
+		for entryType := range entryTypeSet {
+			options.EntryTypes = append(options.EntryTypes, entryType)
+		}
+		slices.Sort(options.EntryTypes)
+	}
+	return options
 }
 
 func (al *AgentLoop) ExportRuntimeMemoryCatalog(format string) ([]byte, string, string, error) {

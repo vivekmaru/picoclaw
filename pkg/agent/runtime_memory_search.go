@@ -138,10 +138,11 @@ func (al *AgentLoop) SearchRuntimeMemoryCatalog(query RuntimeMemoryCatalogQuery)
 	}
 
 	return RuntimeMemoryCatalog{
-		GeneratedAt: catalog.GeneratedAt,
-		Summary:     summary,
-		Scopes:      filteredScopes,
-		Entries:     filteredEntries,
+		GeneratedAt:   catalog.GeneratedAt,
+		Summary:       summary,
+		FilterOptions: runtimeMemoryCatalogFilterOptions(catalog.Scopes, catalog.Entries),
+		Scopes:        filteredScopes,
+		Entries:       filteredEntries,
 	}
 }
 

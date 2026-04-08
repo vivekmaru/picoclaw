@@ -3,6 +3,7 @@ package agent
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -59,6 +60,19 @@ func TestAgentLoop_SearchRuntimeMemoryCatalog(t *testing.T) {
 	}
 	if got := catalog.Summary.DomainCounts["project"]; got != 1 {
 		t.Fatalf("summary.domain_counts[project] = %d, want 1", got)
+	}
+	if got := len(catalog.FilterOptions.Domains); got != 1 || catalog.FilterOptions.Domains[0] != "project" {
+		t.Fatalf("filter_options.domains = %+v, want [project]", catalog.FilterOptions.Domains)
+	}
+	foundReviewerScope := false
+	for _, scope := range catalog.FilterOptions.Scopes {
+		if scope.Scope == "teammate:reviewer" {
+			foundReviewerScope = true
+			break
+		}
+	}
+	if !foundReviewerScope {
+		t.Fatalf("filter_options.scopes = %+v, want teammate:reviewer included", catalog.FilterOptions.Scopes)
 	}
 }
 
@@ -139,6 +153,74 @@ func TestAgentLoop_GetRuntimeMemoryHistory(t *testing.T) {
 	}
 	if !foundApproved {
 		t.Fatalf("expected proposal_approved event in %+v", history.Events)
+	}
+}
+
+func TestAgentLoop_SearchRuntimeMemoryCatalogPreservesFullFilterOptions(t *testing.T) {
+	loop, cfg, _, _, cleanup := newTestAgentLoop(t)
+	t.Cleanup(cleanup)
+	t.Cleanup(func() { loop.GetRegistry().Close() })
+
+	store := NewMemoryProposalStore(cfg.Agents.Defaults.Workspace)
+	_, err := store.Create(MemoryProposalRequest{
+		Scope:         "shared",
+		Domain:        "server",
+		Target:        "long_term",
+		Kind:          "task_result",
+		EntryType:     "runbook",
+		Title:         "Server Runbook",
+		Content:       "Restart the proxy before the app",
+		SourceTaskID:  "subagent-1",
+		SourceAgentID: "main",
+	})
+	if err != nil {
+		t.Fatalf("Create(shared) error = %v", err)
+	}
+	_, err = store.Create(MemoryProposalRequest{
+		Scope:         "teammate:reviewer",
+		Domain:        "project",
+		Target:        "long_term",
+		Kind:          "task_result",
+		EntryType:     "decision",
+		Title:         "Review Decision",
+		Content:       "Prefer staged rollouts",
+		SourceTaskID:  "subagent-2",
+		SourceAgentID: "main",
+	})
+	if err != nil {
+		t.Fatalf("Create(reviewer) error = %v", err)
+	}
+	proposals := store.ListCopies()
+	for _, proposal := range proposals {
+		if _, err := store.Approve(proposal.ID, "operator", "approved"); err != nil {
+			t.Fatalf("Approve(%s) error = %v", proposal.ID, err)
+		}
+	}
+
+	catalog := loop.SearchRuntimeMemoryCatalog(RuntimeMemoryCatalogQuery{
+		Scope: "shared",
+	})
+	if got := len(catalog.Entries); got != 1 {
+		t.Fatalf("len(catalog.Entries) = %d, want 1", got)
+	}
+	if got := strings.Join(catalog.FilterOptions.Domains, ","); got != "project,server" {
+		t.Fatalf("filter_options.domains = %q, want project,server", got)
+	}
+	if got := strings.Join(catalog.FilterOptions.EntryTypes, ","); got != "decision,runbook" {
+		t.Fatalf("filter_options.entry_types = %q, want decision,runbook", got)
+	}
+	foundShared := false
+	foundReviewer := false
+	for _, scope := range catalog.FilterOptions.Scopes {
+		switch scope.Scope {
+		case "shared":
+			foundShared = true
+		case "teammate:reviewer":
+			foundReviewer = true
+		}
+	}
+	if !foundShared || !foundReviewer {
+		t.Fatalf("filter_options.scopes = %+v, want shared and teammate:reviewer included", catalog.FilterOptions.Scopes)
 	}
 }
 

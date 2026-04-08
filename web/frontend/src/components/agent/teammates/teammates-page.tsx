@@ -122,11 +122,6 @@ export function TeammatesPage() {
     refetchInterval: RUNTIME_POLL_MS,
   })
 
-  const memoryCatalogBaseQuery = useQuery({
-    queryKey: ["agent-runtime", "memory-catalog"],
-    queryFn: () => getAgentRuntimeMemoryCatalog(),
-  })
-
   const memoryCatalogQuery = useQuery({
     queryKey: [
       "agent-runtime",
@@ -202,36 +197,28 @@ export function TeammatesPage() {
 
   const catalogScopeEntries = useMemo(
     () =>
-      (memoryCatalogBaseQuery.data?.scopes ?? []).slice().sort((a, b) =>
+      (memoryCatalogQuery.data?.filter_options?.scopes ?? memoryCatalogQuery.data?.scopes ?? []).slice().sort((a, b) =>
         [a.display_name, a.scope, a.owner_agent_id].join("\n").localeCompare(
           [b.display_name, b.scope, b.owner_agent_id].join("\n"),
         ),
       ),
-    [memoryCatalogBaseQuery.data?.scopes],
+    [memoryCatalogQuery.data?.filter_options?.scopes, memoryCatalogQuery.data?.scopes],
   )
 
   const catalogDomainEntries = useMemo(
     () =>
-      Array.from(
-        new Set(
-          (memoryCatalogBaseQuery.data?.entries ?? [])
-            .map((entry) => entry.domain)
-            .filter((value): value is string => Boolean(value)),
-        ),
-      ).sort((a, b) => a.localeCompare(b)),
-    [memoryCatalogBaseQuery.data?.entries],
+      (memoryCatalogQuery.data?.filter_options?.domains ?? []).slice().sort((a, b) =>
+        a.localeCompare(b),
+      ),
+    [memoryCatalogQuery.data?.filter_options?.domains],
   )
 
   const catalogTypeEntries = useMemo(
     () =>
-      Array.from(
-        new Set(
-          (memoryCatalogBaseQuery.data?.entries ?? [])
-            .map((entry) => entry.entry_type)
-            .filter((value): value is string => Boolean(value)),
-        ),
-      ).sort((a, b) => a.localeCompare(b)),
-    [memoryCatalogBaseQuery.data?.entries],
+      (memoryCatalogQuery.data?.filter_options?.entry_types ?? []).slice().sort((a, b) =>
+        a.localeCompare(b),
+      ),
+    [memoryCatalogQuery.data?.filter_options?.entry_types],
   )
 
   const filteredTasks = useMemo(() => {
@@ -1094,8 +1081,8 @@ export function TeammatesPage() {
 
               <MemoryCatalogSection
                 t={t}
-                catalog={memoryCatalogQuery.data ?? memoryCatalogBaseQuery.data ?? null}
-                loading={memoryCatalogQuery.isLoading || memoryCatalogBaseQuery.isLoading}
+                catalog={memoryCatalogQuery.data ?? null}
+                loading={memoryCatalogQuery.isLoading}
                 error={memoryCatalogQuery.error instanceof Error ? memoryCatalogQuery.error : null}
                 entries={filteredCatalogEntries}
                 scopeEntries={catalogScopeEntries}
