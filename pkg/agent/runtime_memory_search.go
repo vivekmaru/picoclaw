@@ -310,6 +310,7 @@ func runtimeMemoryHistoryEventFromProposal(
 		ID:               fmt.Sprintf("%s:%s:%s:%d", kind, proposal.OwnerAgentID, proposal.ID, timestamp),
 		Kind:             kind,
 		OwnerAgentID:     proposal.OwnerAgentID,
+		Workspace:        proposal.Workspace,
 		Scope:            proposal.Scope,
 		ScopeDisplayName: runtimeMemoryScopeDisplayName(proposal.Scope),
 		SubjectID:        proposal.ID,

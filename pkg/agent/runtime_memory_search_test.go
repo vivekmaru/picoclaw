@@ -322,6 +322,7 @@ func TestRuntimeMemoryHistoryEventFromProposalIDsIncludeOwnerContext(t *testing.
 	timestamp := int64(1710000000000)
 	first := runtimeMemoryHistoryEventFromProposal(RuntimeMemoryProposalInfo{
 		OwnerAgentID: "main",
+		Workspace:    "/workspace/main",
 		MemoryProposal: MemoryProposal{
 			ID:    "memory-1",
 			Scope: "shared",
@@ -329,6 +330,7 @@ func TestRuntimeMemoryHistoryEventFromProposalIDsIncludeOwnerContext(t *testing.
 	}, "proposal_created", "launcher", timestamp)
 	second := runtimeMemoryHistoryEventFromProposal(RuntimeMemoryProposalInfo{
 		OwnerAgentID: "reviewer",
+		Workspace:    "/workspace/reviewer",
 		MemoryProposal: MemoryProposal{
 			ID:    "memory-1",
 			Scope: "shared",
@@ -337,5 +339,11 @@ func TestRuntimeMemoryHistoryEventFromProposalIDsIncludeOwnerContext(t *testing.
 
 	if first.ID == second.ID {
 		t.Fatalf("expected unique event ids, got %q", first.ID)
+	}
+	if first.Workspace != "/workspace/main" {
+		t.Fatalf("first.Workspace = %q, want /workspace/main", first.Workspace)
+	}
+	if second.Workspace != "/workspace/reviewer" {
+		t.Fatalf("second.Workspace = %q, want /workspace/reviewer", second.Workspace)
 	}
 }
