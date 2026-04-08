@@ -132,6 +132,52 @@ func TestAgentLoop_GetRuntimeMemoryBackupDeduplicatesCanonicalWorkspaceAliases(t
 	}
 }
 
+func TestAgentLoop_GetRuntimeMemoryBackupDeduplicatesScopeAliasesByFilesystemKey(t *testing.T) {
+	workspace := t.TempDir()
+	registry := &AgentRegistry{
+		agents: map[string]*AgentInstance{
+			"main": {ID: "main", Workspace: workspace},
+		},
+		teammates: map[string]TeammateProfile{
+			"upper": {ID: "upper", AgentID: "main", MemoryScope: "team/A"},
+			"lower": {ID: "lower", AgentID: "main", MemoryScope: "team/a"},
+		},
+	}
+	loop := &AgentLoop{registry: registry}
+
+	scopeUpper := NewMemoryStoreForScope(workspace, "team/A")
+	scopeLower := NewMemoryStoreForScope(workspace, "team/a")
+	if err := scopeUpper.WriteLongTerm("## Team A\n\nUpper alias memory"); err != nil {
+		t.Fatalf("WriteLongTerm(scopeUpper) error = %v", err)
+	}
+	if err := scopeLower.WriteLongTerm("## Team A\n\nLower alias memory"); err != nil {
+		t.Fatalf("WriteLongTerm(scopeLower) error = %v", err)
+	}
+
+	backup, err := loop.GetRuntimeMemoryBackup()
+	if err != nil {
+		t.Fatalf("GetRuntimeMemoryBackup() error = %v", err)
+	}
+
+	expectDuplicate := runtimeMemoryBackupCollisionKey(scopeUpper.LongTermPath()) == runtimeMemoryBackupCollisionKey(scopeLower.LongTermPath())
+	scopeCount := len(backup.Workspaces[0].Scopes)
+	if expectDuplicate {
+		if scopeCount != 2 {
+			t.Fatalf("len(Scopes) = %d, want 2 (shared + one aliased scope)", scopeCount)
+		}
+	} else if scopeCount != 3 {
+		t.Fatalf("len(Scopes) = %d, want 3 (shared + both distinct scopes)", scopeCount)
+	}
+
+	payload, err := json.Marshal(backup)
+	if err != nil {
+		t.Fatalf("Marshal(backup) error = %v", err)
+	}
+	if _, err := loop.RestoreRuntimeMemoryBackup(payload, "validate"); err != nil {
+		t.Fatalf("RestoreRuntimeMemoryBackup(validate) error = %v", err)
+	}
+}
+
 func TestAgentLoop_GetRuntimeMemoryBackupIgnoresBlankWorkspaces(t *testing.T) {
 	workspace := t.TempDir()
 	shared := NewMemoryStoreForScope(workspace, "shared")

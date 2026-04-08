@@ -281,7 +281,7 @@ func runtimeMemoryCatalogScopesForWorkspace(registry *AgentRegistry, ref runtime
 	scopeMap := make(map[string]RuntimeMemoryScopeInfo)
 	addScope := func(scope string) {
 		mem := NewMemoryStoreForScope(ref.Workspace, scope)
-		pathKey := filepath.Clean(mem.LongTermPath())
+		pathKey := runtimeMemoryBackupCollisionKey(mem.LongTermPath())
 		if _, exists := scopeMap[pathKey]; exists {
 			return
 		}

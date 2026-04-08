@@ -145,6 +145,39 @@ func TestAgentLoop_GetRuntimeMemoryCatalogDeduplicatesCanonicalWorkspaceAliases(
 	}
 }
 
+func TestAgentLoop_GetRuntimeMemoryCatalogDeduplicatesScopeAliasesByFilesystemKey(t *testing.T) {
+	workspace := t.TempDir()
+	registry := &AgentRegistry{
+		agents: map[string]*AgentInstance{
+			"main": {ID: "main", Workspace: workspace},
+		},
+		teammates: map[string]TeammateProfile{
+			"upper": {ID: "upper", AgentID: "main", MemoryScope: "team/A"},
+			"lower": {ID: "lower", AgentID: "main", MemoryScope: "team/a"},
+		},
+	}
+	loop := &AgentLoop{registry: registry}
+
+	scopeUpper := NewMemoryStoreForScope(workspace, "team/A")
+	scopeLower := NewMemoryStoreForScope(workspace, "team/a")
+	if err := scopeUpper.WriteLongTerm("## Team A\n\nUpper alias memory"); err != nil {
+		t.Fatalf("WriteLongTerm(scopeUpper) error = %v", err)
+	}
+	if err := scopeLower.WriteLongTerm("## Team A\n\nLower alias memory"); err != nil {
+		t.Fatalf("WriteLongTerm(scopeLower) error = %v", err)
+	}
+
+	catalog := loop.GetRuntimeMemoryCatalog()
+	expectDuplicate := runtimeMemoryBackupCollisionKey(scopeUpper.LongTermPath()) == runtimeMemoryBackupCollisionKey(scopeLower.LongTermPath())
+	if expectDuplicate {
+		if catalog.Summary.ScopeCount != 2 {
+			t.Fatalf("ScopeCount = %d, want 2 (shared + one aliased scope)", catalog.Summary.ScopeCount)
+		}
+	} else if catalog.Summary.ScopeCount != 3 {
+		t.Fatalf("ScopeCount = %d, want 3 (shared + both distinct scopes)", catalog.Summary.ScopeCount)
+	}
+}
+
 func TestAgentLoop_GetRuntimeMemoryCatalogIgnoresBlankWorkspaces(t *testing.T) {
 	workspace := t.TempDir()
 	store := NewMemoryProposalStore(workspace)
