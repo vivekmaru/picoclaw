@@ -88,9 +88,15 @@ catalog. That catalog:
 - enumerates shared and scoped memory namespaces across active workspaces
 - parses reviewed memory entries back into structured records
 - preserves legacy free-form `MEMORY.md` content as legacy catalog entries
+- supports server-side filtering by text, scope, domain, type, archive state,
+  and owner agent
 - can be exported from the launcher as Markdown or JSON for backup and audit
 - tracks reversible lifecycle state such as pinning and archiving under
   `workspace/state/memory/catalog_state.json`
+
+The runtime also derives a lightweight memory history timeline from approved
+catalog entries and memory proposal lifecycle events. That gives the launcher a
+recent-change view without adding another dedicated persistence layer.
 
 PicoClaw now also has a structured memory backup artifact for restore-oriented
 operations. Unlike the catalog export, the backup captures:
@@ -178,9 +184,10 @@ The runtime can load capabilities from:
    Pico channel.
 4. The teammate runtime page polls live task, approval, memory-review, and
    handoff-chain state from the gateway runtime APIs.
-5. The same launcher surface now also reads the approved memory catalog and can
-   export it for offline inspection or backup.
-6. Runtime memory can also be exported as a structured JSON backup and later
+5. The same launcher surface now also reads the approved memory catalog,
+   applies server-side search filters, and shows a recent memory history view.
+6. The catalog can be exported for offline inspection or backup.
+7. Runtime memory can also be exported as a structured JSON backup and later
    restored through validate-or-replace flows.
 
 ## Trust Boundaries

@@ -1,0 +1,349 @@
+package agent
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func TestAgentLoop_SearchRuntimeMemoryCatalog(t *testing.T) {
+	loop, cfg, _, _, cleanup := newTestAgentLoop(t)
+	t.Cleanup(cleanup)
+	t.Cleanup(func() { loop.GetRegistry().Close() })
+
+	store := NewMemoryProposalStore(cfg.Agents.Defaults.Workspace)
+	proposal, err := store.Create(MemoryProposalRequest{
+		Scope:         "teammate:reviewer",
+		Domain:        "project",
+		Target:        "long_term",
+		Kind:          "task_result",
+		EntryType:     "decision",
+		Title:         "Review Decisions",
+		Content:       "Reviewed deployment checklist",
+		Confidence:    "high",
+		SourceTaskID:  "subagent-42",
+		SourceAgentID: "main",
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if _, err := store.Approve(proposal.ID, "operator", "ship it"); err != nil {
+		t.Fatalf("Approve() error = %v", err)
+	}
+
+	catalog := loop.SearchRuntimeMemoryCatalog(RuntimeMemoryCatalogQuery{
+		Search:    "deployment",
+		Scope:     "teammate:reviewer",
+		Domain:    "project",
+		EntryType: "decision",
+		Archive:   "all",
+	})
+	if got := len(catalog.Entries); got != 1 {
+		t.Fatalf("len(catalog.Entries) = %d, want 1", got)
+	}
+	entry := catalog.Entries[0]
+	if entry.Scope != "teammate:reviewer" {
+		t.Fatalf("entry.Scope = %q, want teammate:reviewer", entry.Scope)
+	}
+	if entry.Domain != "project" {
+		t.Fatalf("entry.Domain = %q, want project", entry.Domain)
+	}
+	if entry.EntryType != "decision" {
+		t.Fatalf("entry.EntryType = %q, want decision", entry.EntryType)
+	}
+	if got := catalog.Summary.EntryCount; got != 1 {
+		t.Fatalf("summary.entry_count = %d, want 1", got)
+	}
+	if got := catalog.Summary.ScopeCount; got != 1 {
+		t.Fatalf("summary.scope_count = %d, want 1", got)
+	}
+	if got := catalog.Summary.DomainCounts["project"]; got != 1 {
+		t.Fatalf("summary.domain_counts[project] = %d, want 1", got)
+	}
+	if got := len(catalog.FilterOptions.Domains); got != 1 || catalog.FilterOptions.Domains[0] != "project" {
+		t.Fatalf("filter_options.domains = %+v, want [project]", catalog.FilterOptions.Domains)
+	}
+	foundReviewerScope := false
+	for _, scope := range catalog.FilterOptions.Scopes {
+		if scope.Scope == "teammate:reviewer" {
+			foundReviewerScope = true
+			break
+		}
+	}
+	if !foundReviewerScope {
+		t.Fatalf("filter_options.scopes = %+v, want teammate:reviewer included", catalog.FilterOptions.Scopes)
+	}
+}
+
+func TestAgentLoop_GetRuntimeMemoryHistory(t *testing.T) {
+	loop, cfg, _, _, cleanup := newTestAgentLoop(t)
+	t.Cleanup(cleanup)
+	t.Cleanup(func() { loop.GetRegistry().Close() })
+
+	store := NewMemoryProposalStore(cfg.Agents.Defaults.Workspace)
+	approved, err := store.Create(MemoryProposalRequest{
+		Scope:               "shared",
+		Domain:              "server",
+		Target:              "long_term",
+		Kind:                "task_result",
+		EntryType:           "incident",
+		Title:               "Shared Incident",
+		Content:             "Captured deployment issue",
+		SourceTaskID:        "subagent-1",
+		SourceAgentID:       "main",
+		RequesterTeammateID: "operator",
+	})
+	if err != nil {
+		t.Fatalf("Create(approved) error = %v", err)
+	}
+	if _, err := store.Approve(approved.ID, "operator", "approved"); err != nil {
+		t.Fatalf("Approve() error = %v", err)
+	}
+
+	pending, err := store.Create(MemoryProposalRequest{
+		Scope:         "teammate:reviewer",
+		Domain:        "project",
+		Target:        "long_term",
+		Kind:          "task_result",
+		EntryType:     "decision",
+		Title:         "Review Follow-up",
+		Content:       "Need another pass",
+		SourceTaskID:  "subagent-2",
+		SourceAgentID: "main",
+	})
+	if err != nil {
+		t.Fatalf("Create(pending) error = %v", err)
+	}
+	if _, err := store.Update(pending.ID, "launcher", MemoryProposalUpdate{
+		Scope:     "teammate:reviewer",
+		Domain:    "project",
+		EntryType: "decision",
+		Title:     "Review Follow-up",
+		Content:   "Need another pass",
+	}); err != nil {
+		t.Fatalf("Update() error = %v", err)
+	}
+
+	history := loop.GetRuntimeMemoryHistory(RuntimeMemoryHistoryQuery{Limit: 10})
+	if len(history.Events) == 0 {
+		t.Fatal("expected history events, got none")
+	}
+	if history.Summary.EventCount < len(history.Events) {
+		t.Fatalf("summary.event_count = %d, want >= %d", history.Summary.EventCount, len(history.Events))
+	}
+	foundProposalUpdate := false
+	foundApproved := false
+	for _, event := range history.Events {
+		if event.Timestamp == 0 {
+			t.Fatalf("event %+v has zero timestamp", event)
+		}
+		switch event.Kind {
+		case "proposal_updated":
+			foundProposalUpdate = true
+			if event.Actor != "launcher" {
+				t.Fatalf("proposal_updated actor = %q, want launcher", event.Actor)
+			}
+		case "proposal_approved":
+			foundApproved = true
+		}
+	}
+	if !foundProposalUpdate {
+		t.Fatalf("expected proposal_updated event in %+v", history.Events)
+	}
+	if !foundApproved {
+		t.Fatalf("expected proposal_approved event in %+v", history.Events)
+	}
+}
+
+func TestAgentLoop_GetRuntimeMemoryHistorySummaryCountsBeforeLimit(t *testing.T) {
+	loop, cfg, _, _, cleanup := newTestAgentLoop(t)
+	t.Cleanup(cleanup)
+	t.Cleanup(func() { loop.GetRegistry().Close() })
+
+	store := NewMemoryProposalStore(cfg.Agents.Defaults.Workspace)
+	proposals := []MemoryProposalRequest{
+		{
+			Scope:         "shared",
+			Domain:        "server",
+			Target:        "long_term",
+			Kind:          "task_result",
+			EntryType:     "runbook",
+			Title:         "One",
+			Content:       "First",
+			SourceTaskID:  "subagent-1",
+			SourceAgentID: "main",
+		},
+		{
+			Scope:         "shared",
+			Domain:        "server",
+			Target:        "long_term",
+			Kind:          "task_result",
+			EntryType:     "runbook",
+			Title:         "Two",
+			Content:       "Second",
+			SourceTaskID:  "subagent-2",
+			SourceAgentID: "main",
+		},
+	}
+	for _, req := range proposals {
+		proposal, err := store.Create(req)
+		if err != nil {
+			t.Fatalf("Create() error = %v", err)
+		}
+		if _, err := store.Approve(proposal.ID, "operator", "approved"); err != nil {
+			t.Fatalf("Approve() error = %v", err)
+		}
+	}
+
+	history := loop.GetRuntimeMemoryHistory(RuntimeMemoryHistoryQuery{Limit: 1})
+	if got := len(history.Events); got != 1 {
+		t.Fatalf("len(history.Events) = %d, want 1", got)
+	}
+	if history.Summary.EventCount <= len(history.Events) {
+		t.Fatalf("summary.event_count = %d, want > %d", history.Summary.EventCount, len(history.Events))
+	}
+	if got := history.Summary.KindCounts["proposal_created"]; got < 2 {
+		t.Fatalf("summary.kind_counts[proposal_created] = %d, want >= 2", got)
+	}
+	if got := history.Summary.KindCounts["proposal_approved"]; got < 2 {
+		t.Fatalf("summary.kind_counts[proposal_approved] = %d, want >= 2", got)
+	}
+}
+
+func TestAgentLoop_SearchRuntimeMemoryCatalogPreservesFullFilterOptions(t *testing.T) {
+	loop, cfg, _, _, cleanup := newTestAgentLoop(t)
+	t.Cleanup(cleanup)
+	t.Cleanup(func() { loop.GetRegistry().Close() })
+
+	store := NewMemoryProposalStore(cfg.Agents.Defaults.Workspace)
+	_, err := store.Create(MemoryProposalRequest{
+		Scope:         "shared",
+		Domain:        "server",
+		Target:        "long_term",
+		Kind:          "task_result",
+		EntryType:     "runbook",
+		Title:         "Server Runbook",
+		Content:       "Restart the proxy before the app",
+		SourceTaskID:  "subagent-1",
+		SourceAgentID: "main",
+	})
+	if err != nil {
+		t.Fatalf("Create(shared) error = %v", err)
+	}
+	_, err = store.Create(MemoryProposalRequest{
+		Scope:         "teammate:reviewer",
+		Domain:        "project",
+		Target:        "long_term",
+		Kind:          "task_result",
+		EntryType:     "decision",
+		Title:         "Review Decision",
+		Content:       "Prefer staged rollouts",
+		SourceTaskID:  "subagent-2",
+		SourceAgentID: "main",
+	})
+	if err != nil {
+		t.Fatalf("Create(reviewer) error = %v", err)
+	}
+	proposals := store.ListCopies()
+	for _, proposal := range proposals {
+		if _, err := store.Approve(proposal.ID, "operator", "approved"); err != nil {
+			t.Fatalf("Approve(%s) error = %v", proposal.ID, err)
+		}
+	}
+
+	catalog := loop.SearchRuntimeMemoryCatalog(RuntimeMemoryCatalogQuery{
+		Scope: "shared",
+	})
+	if got := len(catalog.Entries); got != 1 {
+		t.Fatalf("len(catalog.Entries) = %d, want 1", got)
+	}
+	if got := strings.Join(catalog.FilterOptions.Domains, ","); got != "project,server" {
+		t.Fatalf("filter_options.domains = %q, want project,server", got)
+	}
+	if got := strings.Join(catalog.FilterOptions.EntryTypes, ","); got != "decision,runbook" {
+		t.Fatalf("filter_options.entry_types = %q, want decision,runbook", got)
+	}
+	foundShared := false
+	foundReviewer := false
+	for _, scope := range catalog.FilterOptions.Scopes {
+		switch scope.Scope {
+		case "shared":
+			foundShared = true
+		case "teammate:reviewer":
+			foundReviewer = true
+		}
+	}
+	if !foundShared || !foundReviewer {
+		t.Fatalf("filter_options.scopes = %+v, want shared and teammate:reviewer included", catalog.FilterOptions.Scopes)
+	}
+}
+
+func TestAgentLoop_GetRuntimeMemoryHistoryDoesNotCreateCurrentWorkingDirectoryMemory(t *testing.T) {
+	loop, cfg, _, _, cleanup := newTestAgentLoop(t)
+	t.Cleanup(cleanup)
+	t.Cleanup(func() { loop.GetRegistry().Close() })
+
+	store := NewMemoryProposalStore(cfg.Agents.Defaults.Workspace)
+	if _, err := store.Create(MemoryProposalRequest{
+		Scope:         "teammate:reviewer",
+		Domain:        "project",
+		Target:        "long_term",
+		Kind:          "task_result",
+		EntryType:     "decision",
+		Title:         "Review Follow-up",
+		Content:       "Need another pass",
+		SourceTaskID:  "subagent-2",
+		SourceAgentID: "main",
+	}); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	cwd := t.TempDir()
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd() error = %v", err)
+	}
+	if err := os.Chdir(cwd); err != nil {
+		t.Fatalf("Chdir() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(originalWD)
+	})
+
+	_ = loop.GetRuntimeMemoryHistory(RuntimeMemoryHistoryQuery{Limit: 5})
+
+	if _, err := os.Stat(filepath.Join(cwd, "memory")); !os.IsNotExist(err) {
+		t.Fatalf("expected no memory directory in cwd, stat err = %v", err)
+	}
+}
+
+func TestRuntimeMemoryHistoryEventFromProposalIDsIncludeOwnerContext(t *testing.T) {
+	timestamp := int64(1710000000000)
+	first := runtimeMemoryHistoryEventFromProposal(RuntimeMemoryProposalInfo{
+		OwnerAgentID: "main",
+		Workspace:    "/workspace/main",
+		MemoryProposal: MemoryProposal{
+			ID:    "memory-1",
+			Scope: "shared",
+		},
+	}, "proposal_created", "launcher", timestamp)
+	second := runtimeMemoryHistoryEventFromProposal(RuntimeMemoryProposalInfo{
+		OwnerAgentID: "reviewer",
+		Workspace:    "/workspace/reviewer",
+		MemoryProposal: MemoryProposal{
+			ID:    "memory-1",
+			Scope: "shared",
+		},
+	}, "proposal_created", "launcher", timestamp)
+
+	if first.ID == second.ID {
+		t.Fatalf("expected unique event ids, got %q", first.ID)
+	}
+	if first.Workspace != "/workspace/main" {
+		t.Fatalf("first.Workspace = %q, want /workspace/main", first.Workspace)
+	}
+	if second.Workspace != "/workspace/reviewer" {
+		t.Fatalf("second.Workspace = %q, want /workspace/reviewer", second.Workspace)
+	}
+}

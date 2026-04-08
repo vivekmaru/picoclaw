@@ -3,7 +3,7 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query"
-import { useMemo, useState, type ReactNode } from "react"
+import { useDeferredValue, useMemo, useState, type ReactNode } from "react"
 import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
 
@@ -14,6 +14,7 @@ import {
   cancelAgentRuntimeTask,
   createAgentRuntimeMemoryProposal,
   downloadAgentRuntimeMemoryCatalog,
+  getAgentRuntimeMemoryHistory,
   pinAgentRuntimeMemoryCatalogEntry,
   restoreAgentRuntimeMemoryCatalogEntry,
   unpinAgentRuntimeMemoryCatalogEntry,
@@ -26,6 +27,8 @@ import {
   updateAgentRuntimeMemoryProposal,
   type AgentRuntimeMemoryCatalog,
   type AgentRuntimeMemoryCatalogEntry,
+  type AgentRuntimeMemoryHistory,
+  type AgentRuntimeMemoryHistoryEvent,
   type AgentRuntimeMemoryProposal,
   type AgentRuntimeSnapshot,
   type AgentRuntimeTask,
@@ -96,6 +99,8 @@ export function TeammatesPage() {
   const [catalogDomainFilter, setCatalogDomainFilter] = useState("all")
   const [catalogTypeFilter, setCatalogTypeFilter] = useState("all")
   const [catalogArchiveFilter, setCatalogArchiveFilter] = useState("active")
+  const [historyFilter, setHistoryFilter] = useState("")
+  const [historyKindFilter, setHistoryKindFilter] = useState("all")
   const [selectedTaskKey, setSelectedTaskKey] = useState("")
   const [selectedProposalKey, setSelectedProposalKey] = useState("")
   const [selectedCatalogEntryKey, setSelectedCatalogEntryKey] = useState("")
@@ -108,6 +113,8 @@ export function TeammatesPage() {
   const [proposalEditors, setProposalEditors] = useState<Record<string, MemoryProposalEditor>>(
     {},
   )
+  const deferredCatalogFilter = useDeferredValue(catalogFilter)
+  const deferredHistoryFilter = useDeferredValue(historyFilter)
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["agent-runtime"],
@@ -116,8 +123,35 @@ export function TeammatesPage() {
   })
 
   const memoryCatalogQuery = useQuery({
-    queryKey: ["agent-runtime", "memory-catalog"],
-    queryFn: getAgentRuntimeMemoryCatalog,
+    queryKey: [
+      "agent-runtime",
+      "memory-catalog",
+      "filtered",
+      deferredCatalogFilter,
+      catalogScopeFilter,
+      catalogDomainFilter,
+      catalogTypeFilter,
+      catalogArchiveFilter,
+    ],
+    queryFn: () =>
+      getAgentRuntimeMemoryCatalog({
+        search: deferredCatalogFilter,
+        scope: catalogScopeFilter === "all" ? undefined : catalogScopeFilter,
+        domain: catalogDomainFilter === "all" ? undefined : catalogDomainFilter,
+        entryType: catalogTypeFilter === "all" ? undefined : catalogTypeFilter,
+        archive: catalogArchiveFilter,
+      }),
+    refetchInterval: RUNTIME_POLL_MS,
+  })
+
+  const memoryHistoryQuery = useQuery({
+    queryKey: ["agent-runtime", "memory-history", deferredHistoryFilter, historyKindFilter],
+    queryFn: () =>
+      getAgentRuntimeMemoryHistory({
+        search: deferredHistoryFilter,
+        kind: historyKindFilter === "all" ? undefined : historyKindFilter,
+        limit: 20,
+      }),
     refetchInterval: RUNTIME_POLL_MS,
   })
 
@@ -163,36 +197,28 @@ export function TeammatesPage() {
 
   const catalogScopeEntries = useMemo(
     () =>
-      (memoryCatalogQuery.data?.scopes ?? []).slice().sort((a, b) =>
+      (memoryCatalogQuery.data?.filter_options?.scopes ?? memoryCatalogQuery.data?.scopes ?? []).slice().sort((a, b) =>
         [a.display_name, a.scope, a.owner_agent_id].join("\n").localeCompare(
           [b.display_name, b.scope, b.owner_agent_id].join("\n"),
         ),
       ),
-    [memoryCatalogQuery.data?.scopes],
+    [memoryCatalogQuery.data?.filter_options?.scopes, memoryCatalogQuery.data?.scopes],
   )
 
   const catalogDomainEntries = useMemo(
     () =>
-      Array.from(
-        new Set(
-          (memoryCatalogQuery.data?.entries ?? [])
-            .map((entry) => entry.domain)
-            .filter((value): value is string => Boolean(value)),
-        ),
-      ).sort((a, b) => a.localeCompare(b)),
-    [memoryCatalogQuery.data?.entries],
+      (memoryCatalogQuery.data?.filter_options?.domains ?? []).slice().sort((a, b) =>
+        a.localeCompare(b),
+      ),
+    [memoryCatalogQuery.data?.filter_options?.domains],
   )
 
   const catalogTypeEntries = useMemo(
     () =>
-      Array.from(
-        new Set(
-          (memoryCatalogQuery.data?.entries ?? [])
-            .map((entry) => entry.entry_type)
-            .filter((value): value is string => Boolean(value)),
-        ),
-      ).sort((a, b) => a.localeCompare(b)),
-    [memoryCatalogQuery.data?.entries],
+      (memoryCatalogQuery.data?.filter_options?.entry_types ?? []).slice().sort((a, b) =>
+        a.localeCompare(b),
+      ),
+    [memoryCatalogQuery.data?.filter_options?.entry_types],
   )
 
   const filteredTasks = useMemo(() => {
@@ -249,52 +275,18 @@ export function TeammatesPage() {
     })
   }, [data?.memory_proposals, memoryDomainFilter, memoryFilter, memoryStatusFilter, memoryTypeFilter])
 
-  const filteredCatalogEntries = useMemo(() => {
-    const normalizedFilter = catalogFilter.trim().toLowerCase()
-    return (memoryCatalogQuery.data?.entries ?? []).filter((entry) => {
-      if (catalogArchiveFilter === "active" && entry.archived) {
-        return false
-      }
-      if (catalogArchiveFilter === "archived" && !entry.archived) {
-        return false
-      }
-      if (catalogScopeFilter !== "all" && entry.scope !== catalogScopeFilter) {
-        return false
-      }
-      if (catalogDomainFilter !== "all" && entry.domain !== catalogDomainFilter) {
-        return false
-      }
-      if (catalogTypeFilter !== "all" && entry.entry_type !== catalogTypeFilter) {
-        return false
-      }
-      if (!normalizedFilter) {
-        return true
-      }
-      return [
-        entry.id,
-        entry.title,
-        entry.content,
-        entry.scope,
-        entry.scope_display_name,
-        entry.domain,
-        entry.entry_type,
-        entry.source_teammate_id,
-        entry.source_task_id,
-        entry.reviewed_by,
-        entry.owner_agent_id,
-      ]
-        .join("\n")
-        .toLowerCase()
-        .includes(normalizedFilter)
-    })
-  }, [
-    catalogDomainFilter,
-    catalogFilter,
-    catalogArchiveFilter,
-    catalogScopeFilter,
-    catalogTypeFilter,
-    memoryCatalogQuery.data?.entries,
-  ])
+  const filteredCatalogEntries = useMemo(
+    () => memoryCatalogQuery.data?.entries ?? [],
+    [memoryCatalogQuery.data?.entries],
+  )
+
+  const memoryHistoryKindEntries = useMemo(
+    () =>
+      Object.entries(memoryHistoryQuery.data?.summary.kind_counts ?? {}).sort((a, b) =>
+        a[0].localeCompare(b[0]),
+      ),
+    [memoryHistoryQuery.data?.summary.kind_counts],
+  )
 
   const effectiveSelectedTaskKey = useMemo(() => {
     if ((data?.tasks ?? []).some((task) => taskKey(task) === selectedTaskKey)) {
@@ -395,6 +387,7 @@ export function TeammatesPage() {
   const invalidateRuntime = () => {
     void queryClient.invalidateQueries({ queryKey: ["agent-runtime"] })
     void queryClient.invalidateQueries({ queryKey: ["agent-runtime", "memory-catalog"] })
+    void queryClient.invalidateQueries({ queryKey: ["agent-runtime", "memory-history"] })
     if (taskDetail) {
       void queryClient.invalidateQueries({
         queryKey: ["agent-runtime", "task", taskDetail.owner_agent_id, taskDetail.id],
@@ -1120,6 +1113,19 @@ export function TeammatesPage() {
                   archiveMemoryCatalogEntryMutation.isPending ||
                   restoreMemoryCatalogEntryMutation.isPending
                 }
+              />
+
+              <MemoryHistorySection
+                t={t}
+                history={memoryHistoryQuery.data ?? null}
+                loading={memoryHistoryQuery.isLoading}
+                error={memoryHistoryQuery.error instanceof Error ? memoryHistoryQuery.error : null}
+                filter={historyFilter}
+                setFilter={setHistoryFilter}
+                kindFilter={historyKindFilter}
+                setKindFilter={setHistoryKindFilter}
+                kindEntries={memoryHistoryKindEntries}
+                events={memoryHistoryQuery.data?.events ?? []}
               />
             </>
           )}
@@ -2525,6 +2531,118 @@ function MemoryCatalogSection(props: {
         </CardContent>
       </Card>
     </section>
+  )
+}
+
+function MemoryHistorySection(props: {
+  t: (key: string, options?: Record<string, unknown>) => string
+  history: AgentRuntimeMemoryHistory | null
+  loading: boolean
+  error: Error | null
+  filter: string
+  setFilter: (value: string) => void
+  kindFilter: string
+  setKindFilter: (value: string) => void
+  kindEntries: Array<[string, number]>
+  events: AgentRuntimeMemoryHistoryEvent[]
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>{props.t("pages.agent.teammates.memory_history_title")}</CardTitle>
+        <CardDescription>
+          {props.t("pages.agent.teammates.memory_history_description")}
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {props.history ? (
+          <div className="grid gap-3 sm:grid-cols-3">
+            <RuntimeField
+              label={props.t("pages.agent.teammates.memory_history_stats.events")}
+              value={String(props.history.summary.event_count)}
+            />
+            <RuntimeField
+              label={props.t("pages.agent.teammates.memory_history_stats.catalog")}
+              value={String(props.history.summary.catalog_event_count)}
+            />
+            <RuntimeField
+              label={props.t("pages.agent.teammates.memory_history_stats.proposals")}
+              value={String(props.history.summary.proposal_event_count)}
+            />
+          </div>
+        ) : null}
+
+        <div className="grid gap-3 md:grid-cols-[2fr_1fr]">
+          <Input
+            value={props.filter}
+            onChange={(event) => props.setFilter(event.target.value)}
+            placeholder={props.t("pages.agent.teammates.memory_history_filters.search_placeholder")}
+          />
+          <select
+            value={props.kindFilter}
+            onChange={(event) => props.setKindFilter(event.target.value)}
+            className="border-input bg-background ring-offset-background flex h-10 w-full rounded-md border px-3 py-2 text-sm"
+          >
+            <option value="all">
+              {props.t("pages.agent.teammates.memory_history_filters.kind_all")}
+            </option>
+            {props.kindEntries.map(([kind, count]) => (
+              <option key={kind} value={kind}>
+                {kind} ({count})
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {props.error ? (
+          <div className="border-destructive/50 bg-destructive/10 rounded-xl border p-4 text-sm">
+            <div className="text-destructive font-medium">
+              {props.t("pages.agent.teammates.memory_history_load_error")}
+            </div>
+            <div className="text-muted-foreground mt-1">{props.error.message}</div>
+          </div>
+        ) : props.loading ? (
+          <div className="space-y-3">
+            {[1, 2, 3].map((row) => (
+              <div key={row} className="rounded-xl border p-4">
+                <Skeleton className="h-4 w-40" />
+                <Skeleton className="mt-2 h-4 w-full" />
+              </div>
+            ))}
+          </div>
+        ) : props.events.length === 0 ? (
+          <p className="text-muted-foreground text-sm">
+            {props.t("pages.agent.teammates.memory_history_empty")}
+          </p>
+        ) : (
+          <div className="space-y-3">
+            {props.events.map((event) => (
+              <div key={event.id} className="rounded-xl border p-4">
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="font-medium">{event.title || event.subject_id}</div>
+                  <Badge variant="secondary">{event.kind}</Badge>
+                  {event.scope_display_name ? (
+                    <Badge variant="outline">{event.scope_display_name}</Badge>
+                  ) : null}
+                  {event.domain ? <Badge variant="outline">{event.domain}</Badge> : null}
+                  {event.entry_type ? <Badge variant="outline">{event.entry_type}</Badge> : null}
+                </div>
+                {event.content ? (
+                  <p className="text-muted-foreground mt-2 line-clamp-2 text-sm whitespace-pre-wrap">
+                    {event.content}
+                  </p>
+                ) : null}
+                <div className="text-muted-foreground mt-3 flex flex-wrap gap-3 text-xs">
+                  <span>{event.subject_type}</span>
+                  {event.actor ? <span>{event.actor}</span> : null}
+                  <span>{formatTimestamp(event.timestamp)}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   )
 }
 

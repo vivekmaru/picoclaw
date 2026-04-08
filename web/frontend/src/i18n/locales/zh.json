@@ -433,6 +433,10 @@
         "memory_catalog_archive_error": "归档所选记忆条目失败。",
         "memory_catalog_restore_success": "已恢复记忆条目 {{title}}。",
         "memory_catalog_restore_error": "恢复所选记忆条目失败。",
+        "memory_history_title": "记忆历史",
+        "memory_history_description": "按时间追踪长期记忆的变化，包括已批准条目和提案审核事件。",
+        "memory_history_empty": "当前筛选条件下没有匹配的记忆历史事件。",
+        "memory_history_load_error": "加载最近记忆历史失败。",
         "memory_proposal_create_success": "已创建记忆提案 {{id}}。",
         "memory_proposal_create_error": "从所选任务创建记忆提案失败。",
         "memory_proposal_approve_success": "已批准记忆提案 {{id}}。",
@@ -511,12 +515,21 @@
           "archived_only": "仅归档",
           "archived_all": "全部生命周期状态"
         },
+        "memory_history_filters": {
+          "search_placeholder": "按事件、标题、内容、作用域、执行人、域或类型过滤",
+          "kind_all": "全部事件"
+        },
         "memory_catalog_stats": {
           "entries": "已批准条目",
           "scopes": "目录作用域",
           "workspaces": "工作区",
           "pinned": "已置顶",
           "archived": "已归档"
+        },
+        "memory_history_stats": {
+          "events": "事件",
+          "catalog": "目录事件",
+          "proposals": "提案事件"
         },
         "review_fields": {
           "actor": "审核人",

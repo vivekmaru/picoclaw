@@ -56,6 +56,7 @@ type RuntimeTaskInfo struct {
 
 type RuntimeMemoryProposalInfo struct {
 	OwnerAgentID string `json:"owner_agent_id"`
+	Workspace    string `json:"workspace,omitempty"`
 	Approvable   bool   `json:"approvable,omitempty"`
 	Rejectable   bool   `json:"rejectable,omitempty"`
 	MemoryProposal
@@ -233,13 +234,21 @@ func runtimeTaskHandoffable(task tools.SubagentTask) bool {
 
 func collectRuntimeMemoryProposals(registry *AgentRegistry, agentIDs []string) []RuntimeMemoryProposalInfo {
 	proposals := make([]RuntimeMemoryProposalInfo, 0)
+	seenWorkspaces := map[string]struct{}{}
 	for _, agentID := range agentIDs {
-		store := runtimeMemoryProposalStoreForAgent(registry, agentID)
-		if store == nil {
+		workspace := runtimeMemoryProposalWorkspaceForAgent(registry, agentID)
+		if workspace == "" {
 			continue
 		}
+		workspaceKey := runtimeMemoryBackupWorkspaceCollisionKey(workspace)
+		if _, exists := seenWorkspaces[workspaceKey]; exists {
+			continue
+		}
+		seenWorkspaces[workspaceKey] = struct{}{}
+
+		store := NewMemoryProposalStore(workspace)
 		for _, proposal := range store.ListCopies() {
-			proposals = append(proposals, runtimeMemoryProposalInfo(agentID, proposal))
+			proposals = append(proposals, runtimeMemoryProposalInfo(agentID, workspace, proposal))
 		}
 	}
 	slices.SortFunc(proposals, func(a, b RuntimeMemoryProposalInfo) int {
@@ -267,9 +276,10 @@ func collectRuntimeMemoryProposals(registry *AgentRegistry, agentIDs []string) [
 	return proposals
 }
 
-func runtimeMemoryProposalInfo(ownerAgentID string, proposal MemoryProposal) RuntimeMemoryProposalInfo {
+func runtimeMemoryProposalInfo(ownerAgentID, workspace string, proposal MemoryProposal) RuntimeMemoryProposalInfo {
 	return RuntimeMemoryProposalInfo{
 		OwnerAgentID:   ownerAgentID,
+		Workspace:      workspace,
 		Approvable:     strings.EqualFold(strings.TrimSpace(proposal.Status), "pending"),
 		Rejectable:     strings.EqualFold(strings.TrimSpace(proposal.Status), "pending"),
 		MemoryProposal: proposal,
@@ -299,12 +309,20 @@ func runtimeTaskManagerForAgent(registry *AgentRegistry, agentID string) *tools.
 }
 
 func runtimeMemoryProposalStoreForAgent(registry *AgentRegistry, agentID string) *MemoryProposalStore {
-	if registry == nil {
+	workspace := runtimeMemoryProposalWorkspaceForAgent(registry, agentID)
+	if workspace == "" {
 		return nil
+	}
+	return NewMemoryProposalStore(workspace)
+}
+
+func runtimeMemoryProposalWorkspaceForAgent(registry *AgentRegistry, agentID string) string {
+	if registry == nil {
+		return ""
 	}
 	agentInst, ok := registry.GetAgent(agentID)
 	if !ok || agentInst == nil || strings.TrimSpace(agentInst.Workspace) == "" {
-		return nil
+		return ""
 	}
-	return NewMemoryProposalStore(agentInst.Workspace)
+	return agentInst.Workspace
 }

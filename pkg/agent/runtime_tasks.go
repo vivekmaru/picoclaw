@@ -238,7 +238,7 @@ func (al *AgentLoop) CreateRuntimeMemoryProposalFromTask(ownerAgentID, taskID, s
 	if err != nil {
 		return RuntimeMemoryProposalInfo{}, err
 	}
-	return runtimeMemoryProposalInfo(ownerAgentID, proposal), nil
+	return runtimeMemoryProposalInfo(ownerAgentID, runtimeMemoryProposalWorkspaceForAgent(registry, ownerAgentID), proposal), nil
 }
 
 func (al *AgentLoop) UpdateRuntimeMemoryProposal(
@@ -263,7 +263,7 @@ func (al *AgentLoop) UpdateRuntimeMemoryProposal(
 		}
 		return RuntimeMemoryProposalInfo{}, err
 	}
-	return runtimeMemoryProposalInfo(ownerAgentID, proposal), nil
+	return runtimeMemoryProposalInfo(ownerAgentID, runtimeMemoryProposalWorkspaceForAgent(registry, ownerAgentID), proposal), nil
 }
 
 func (al *AgentLoop) ApproveRuntimeMemoryProposal(ownerAgentID, proposalID, actor, note string) (RuntimeMemoryProposalInfo, error) {
@@ -282,7 +282,7 @@ func (al *AgentLoop) ApproveRuntimeMemoryProposal(ownerAgentID, proposalID, acto
 		}
 		return RuntimeMemoryProposalInfo{}, err
 	}
-	return runtimeMemoryProposalInfo(ownerAgentID, proposal), nil
+	return runtimeMemoryProposalInfo(ownerAgentID, runtimeMemoryProposalWorkspaceForAgent(registry, ownerAgentID), proposal), nil
 }
 
 func (al *AgentLoop) RejectRuntimeMemoryProposal(ownerAgentID, proposalID, actor, note string) (RuntimeMemoryProposalInfo, error) {
@@ -301,7 +301,7 @@ func (al *AgentLoop) RejectRuntimeMemoryProposal(ownerAgentID, proposalID, actor
 		}
 		return RuntimeMemoryProposalInfo{}, err
 	}
-	return runtimeMemoryProposalInfo(ownerAgentID, proposal), nil
+	return runtimeMemoryProposalInfo(ownerAgentID, runtimeMemoryProposalWorkspaceForAgent(registry, ownerAgentID), proposal), nil
 }
 
 func isSubagentTaskTerminalStatus(status string) bool {

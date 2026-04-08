@@ -315,6 +315,53 @@ func TestAgentLoopRuntimeApprovalAndMemoryReview(t *testing.T) {
 	}
 }
 
+func TestAgentLoopGetRuntimeSnapshotDeduplicatesSharedWorkspaceMemoryProposals(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Agents.Defaults.Workspace = t.TempDir()
+	cfg.Agents.List = []config.AgentConfig{
+		{ID: "main", Default: true, Name: "Main"},
+		{ID: "reviewer", Name: "Reviewer"},
+	}
+
+	loop := NewAgentLoop(cfg, bus.NewMessageBus(), &mockProvider{})
+	t.Cleanup(func() {
+		loop.GetRegistry().Close()
+	})
+
+	proposalStore := runtimeMemoryProposalStoreForAgent(loop.GetRegistry(), "main")
+	if proposalStore == nil {
+		t.Fatal("expected proposal store")
+	}
+	proposal, err := proposalStore.Create(MemoryProposalRequest{
+		Scope:         "shared",
+		Domain:        "project",
+		Target:        "long_term",
+		Kind:          "task_result",
+		EntryType:     "decision",
+		Title:         "Shared decision",
+		Content:       "Only one proposal should be visible.",
+		SourceTaskID:  "subagent-1",
+		SourceAgentID: "main",
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if proposal.ID == "" {
+		t.Fatal("expected proposal ID")
+	}
+
+	snapshot := loop.GetRuntimeSnapshot()
+	if snapshot.Summary.MemoryProposalCount != 1 {
+		t.Fatalf("MemoryProposalCount = %d, want 1", snapshot.Summary.MemoryProposalCount)
+	}
+	if got := len(snapshot.MemoryProposals); got != 1 {
+		t.Fatalf("len(snapshot.MemoryProposals) = %d, want 1", got)
+	}
+	if snapshot.MemoryProposals[0].Workspace != cfg.Agents.Defaults.Workspace {
+		t.Fatalf("snapshot.MemoryProposals[0].Workspace = %q, want %q", snapshot.MemoryProposals[0].Workspace, cfg.Agents.Defaults.Workspace)
+	}
+}
+
 func TestAgentLoopHandoffRuntimeTaskCreatesLinkedChildTask(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Agents.Defaults.Workspace = t.TempDir()
