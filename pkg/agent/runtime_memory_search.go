@@ -304,7 +304,7 @@ func runtimeMemoryHistoryEventFromProposal(
 		Kind:             kind,
 		OwnerAgentID:     proposal.OwnerAgentID,
 		Scope:            proposal.Scope,
-		ScopeDisplayName: NewMemoryStoreForScope(".", proposal.Scope).DisplayName(),
+		ScopeDisplayName: runtimeMemoryScopeDisplayName(proposal.Scope),
 		SubjectID:        proposal.ID,
 		SubjectType:      "memory_proposal",
 		Title:            proposal.Title,

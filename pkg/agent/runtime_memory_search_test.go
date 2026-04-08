@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -137,5 +139,44 @@ func TestAgentLoop_GetRuntimeMemoryHistory(t *testing.T) {
 	}
 	if !foundApproved {
 		t.Fatalf("expected proposal_approved event in %+v", history.Events)
+	}
+}
+
+func TestAgentLoop_GetRuntimeMemoryHistoryDoesNotCreateCurrentWorkingDirectoryMemory(t *testing.T) {
+	loop, cfg, _, _, cleanup := newTestAgentLoop(t)
+	t.Cleanup(cleanup)
+	t.Cleanup(func() { loop.GetRegistry().Close() })
+
+	store := NewMemoryProposalStore(cfg.Agents.Defaults.Workspace)
+	if _, err := store.Create(MemoryProposalRequest{
+		Scope:         "teammate:reviewer",
+		Domain:        "project",
+		Target:        "long_term",
+		Kind:          "task_result",
+		EntryType:     "decision",
+		Title:         "Review Follow-up",
+		Content:       "Need another pass",
+		SourceTaskID:  "subagent-2",
+		SourceAgentID: "main",
+	}); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	cwd := t.TempDir()
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd() error = %v", err)
+	}
+	if err := os.Chdir(cwd); err != nil {
+		t.Fatalf("Chdir() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(originalWD)
+	})
+
+	_ = loop.GetRuntimeMemoryHistory(RuntimeMemoryHistoryQuery{Limit: 5})
+
+	if _, err := os.Stat(filepath.Join(cwd, "memory")); !os.IsNotExist(err) {
+		t.Fatalf("expected no memory directory in cwd, stat err = %v", err)
 	}
 }

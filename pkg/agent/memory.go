@@ -85,13 +85,18 @@ func (ms *MemoryStore) IsShared() bool {
 }
 
 func (ms *MemoryStore) DisplayName() string {
+	return runtimeMemoryScopeDisplayName(ms.scope)
+}
+
+func runtimeMemoryScopeDisplayName(scope string) string {
+	scope = normalizedMemoryScope(scope)
 	switch {
-	case ms.IsShared():
+	case scope == "shared":
 		return "Shared Memory"
-	case strings.HasPrefix(ms.scope, "teammate:"):
-		return fmt.Sprintf("Teammate Memory (%s)", strings.TrimPrefix(ms.scope, "teammate:"))
+	case strings.HasPrefix(scope, "teammate:"):
+		return fmt.Sprintf("Teammate Memory (%s)", strings.TrimPrefix(scope, "teammate:"))
 	default:
-		return fmt.Sprintf("Scoped Memory (%s)", ms.scope)
+		return fmt.Sprintf("Scoped Memory (%s)", scope)
 	}
 }
 
