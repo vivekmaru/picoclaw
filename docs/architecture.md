@@ -92,6 +92,20 @@ catalog. That catalog:
 - tracks reversible lifecycle state such as pinning and archiving under
   `workspace/state/memory/catalog_state.json`
 
+PicoClaw now also has a structured memory backup artifact for restore-oriented
+operations. Unlike the catalog export, the backup captures:
+
+- long-term memory content per scope
+- daily notes per scope
+- pending memory proposals
+- lifecycle state for pinned and archived catalog entries
+
+The restore flow is explicit:
+
+- `validate` checks schema, scope paths, and workspace membership without
+  writing
+- `replace` rewrites the included workspace memory state from the backup
+
 Delegation state now also persists under `workspace/state/subagents/<agent-id>/`.
 Tracked tasks can form explicit parent/child handoff chains, so the launcher
 can show:
@@ -166,6 +180,8 @@ The runtime can load capabilities from:
    handoff-chain state from the gateway runtime APIs.
 5. The same launcher surface now also reads the approved memory catalog and can
    export it for offline inspection or backup.
+6. Runtime memory can also be exported as a structured JSON backup and later
+   restored through validate-or-replace flows.
 
 ## Trust Boundaries
 

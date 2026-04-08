@@ -103,6 +103,119 @@ func TestAgentLoop_GetRuntimeMemoryCatalog(t *testing.T) {
 	}
 }
 
+func TestAgentLoop_GetRuntimeMemoryCatalogDeduplicatesCanonicalWorkspaceAliases(t *testing.T) {
+	workspace := t.TempDir()
+	aliasWorkspace := workspace + string(filepath.Separator)
+	store := NewMemoryProposalStore(workspace)
+	proposal, err := store.Create(MemoryProposalRequest{
+		Scope:     "shared",
+		Domain:    "shared_team",
+		Target:    "long_term",
+		Kind:      "task_result",
+		EntryType: "fact",
+		Title:     "Alias workspace entry",
+		Content:   "Catalog should only report one canonical workspace.",
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if _, err := store.Approve(proposal.ID, "launcher", ""); err != nil {
+		t.Fatalf("Approve() error = %v", err)
+	}
+
+	registry := &AgentRegistry{
+		agents: map[string]*AgentInstance{
+			"main":   {ID: "main", Workspace: workspace},
+			"helper": {ID: "helper", Workspace: aliasWorkspace},
+		},
+	}
+	loop := &AgentLoop{registry: registry}
+
+	catalog := loop.GetRuntimeMemoryCatalog()
+	if catalog.Summary.WorkspaceCount != 1 {
+		t.Fatalf("WorkspaceCount = %d, want 1", catalog.Summary.WorkspaceCount)
+	}
+	if len(catalog.Scopes) == 0 {
+		t.Fatal("expected scopes in catalog")
+	}
+	for _, scope := range catalog.Scopes {
+		if scope.Workspace != filepath.Clean(workspace) {
+			t.Fatalf("scope.Workspace = %q, want %q", scope.Workspace, filepath.Clean(workspace))
+		}
+	}
+}
+
+func TestAgentLoop_GetRuntimeMemoryCatalogDeduplicatesScopeAliasesByFilesystemKey(t *testing.T) {
+	workspace := t.TempDir()
+	registry := &AgentRegistry{
+		agents: map[string]*AgentInstance{
+			"main": {ID: "main", Workspace: workspace},
+		},
+		teammates: map[string]TeammateProfile{
+			"upper": {ID: "upper", AgentID: "main", MemoryScope: "team/A"},
+			"lower": {ID: "lower", AgentID: "main", MemoryScope: "team/a"},
+		},
+	}
+	loop := &AgentLoop{registry: registry}
+
+	scopeUpper := NewMemoryStoreForScope(workspace, "team/A")
+	scopeLower := NewMemoryStoreForScope(workspace, "team/a")
+	if err := scopeUpper.WriteLongTerm("## Team A\n\nUpper alias memory"); err != nil {
+		t.Fatalf("WriteLongTerm(scopeUpper) error = %v", err)
+	}
+	if err := scopeLower.WriteLongTerm("## Team A\n\nLower alias memory"); err != nil {
+		t.Fatalf("WriteLongTerm(scopeLower) error = %v", err)
+	}
+
+	catalog := loop.GetRuntimeMemoryCatalog()
+	expectDuplicate := runtimeMemoryBackupCollisionKey(scopeUpper.LongTermPath()) == runtimeMemoryBackupCollisionKey(scopeLower.LongTermPath())
+	if expectDuplicate {
+		if catalog.Summary.ScopeCount != 2 {
+			t.Fatalf("ScopeCount = %d, want 2 (shared + one aliased scope)", catalog.Summary.ScopeCount)
+		}
+	} else if catalog.Summary.ScopeCount != 3 {
+		t.Fatalf("ScopeCount = %d, want 3 (shared + both distinct scopes)", catalog.Summary.ScopeCount)
+	}
+}
+
+func TestAgentLoop_GetRuntimeMemoryCatalogIgnoresBlankWorkspaces(t *testing.T) {
+	workspace := t.TempDir()
+	store := NewMemoryProposalStore(workspace)
+	proposal, err := store.Create(MemoryProposalRequest{
+		Scope:     "shared",
+		Domain:    "shared_team",
+		Target:    "long_term",
+		Kind:      "task_result",
+		EntryType: "fact",
+		Title:     "Valid workspace entry",
+		Content:   "Blank workspace agents should be ignored.",
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if _, err := store.Approve(proposal.ID, "launcher", ""); err != nil {
+		t.Fatalf("Approve() error = %v", err)
+	}
+
+	registry := &AgentRegistry{
+		agents: map[string]*AgentInstance{
+			"blank": {ID: "blank", Workspace: "   "},
+			"main":  {ID: "main", Workspace: workspace},
+		},
+	}
+	loop := &AgentLoop{registry: registry}
+
+	catalog := loop.GetRuntimeMemoryCatalog()
+	if catalog.Summary.WorkspaceCount != 1 {
+		t.Fatalf("WorkspaceCount = %d, want 1", catalog.Summary.WorkspaceCount)
+	}
+	for _, scope := range catalog.Scopes {
+		if scope.Workspace == "." {
+			t.Fatalf("blank workspace leaked into catalog scopes: %#v", catalog.Scopes)
+		}
+	}
+}
+
 func TestAgentLoop_MemoryCatalogLifecycleActions(t *testing.T) {
 	workspace := t.TempDir()
 	store := NewMemoryProposalStore(workspace)

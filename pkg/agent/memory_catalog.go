@@ -263,11 +263,12 @@ func runtimeMemoryCatalogWorkspaces(registry *AgentRegistry) []runtimeMemoryWork
 		if !ok || agentInst == nil {
 			continue
 		}
-		workspace := strings.TrimSpace(agentInst.Workspace)
-		if workspace == "" || seen[workspace] {
+		workspace := runtimeMemoryBackupCanonicalWorkspace(agentInst.Workspace)
+		workspaceKey := runtimeMemoryBackupWorkspaceCollisionKey(workspace)
+		if workspace == "" || seen[workspaceKey] {
 			continue
 		}
-		seen[workspace] = true
+		seen[workspaceKey] = true
 		refs = append(refs, runtimeMemoryWorkspaceRef{
 			OwnerAgentID: agentID,
 			Workspace:    workspace,
@@ -280,7 +281,7 @@ func runtimeMemoryCatalogScopesForWorkspace(registry *AgentRegistry, ref runtime
 	scopeMap := make(map[string]RuntimeMemoryScopeInfo)
 	addScope := func(scope string) {
 		mem := NewMemoryStoreForScope(ref.Workspace, scope)
-		pathKey := filepath.Clean(mem.LongTermPath())
+		pathKey := runtimeMemoryBackupCollisionKey(mem.LongTermPath())
 		if _, exists := scopeMap[pathKey]; exists {
 			return
 		}
@@ -300,7 +301,7 @@ func runtimeMemoryCatalogScopesForWorkspace(registry *AgentRegistry, ref runtime
 		if !ok || agentInst == nil {
 			continue
 		}
-		if strings.TrimSpace(agentInst.Workspace) != ref.Workspace {
+		if runtimeMemoryBackupWorkspaceCollisionKey(agentInst.Workspace) != runtimeMemoryBackupWorkspaceCollisionKey(ref.Workspace) {
 			continue
 		}
 		addScope(teammate.MemoryScope)

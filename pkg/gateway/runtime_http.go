@@ -14,6 +14,8 @@ import (
 const gatewayRuntimePath = "/runtime/agent"
 const gatewayRuntimeMemoryCatalogPath = "/runtime/agent/memory-catalog"
 const gatewayRuntimeMemoryCatalogExportPath = "/runtime/agent/memory-catalog/export"
+const gatewayRuntimeMemoryBackupExportPath = "/runtime/agent/memory-backup/export"
+const gatewayRuntimeMemoryBackupRestorePath = "/runtime/agent/memory-backup/restore"
 const gatewayRuntimeMemoryCatalogEntriesPrefix = "/runtime/agent/memory-catalog/entries/"
 const gatewayRuntimeTasksPrefix = "/runtime/agent/tasks/"
 const gatewayRuntimeMemoryProposalsPrefix = "/runtime/agent/memory-proposals/"
@@ -49,6 +51,11 @@ type runtimeMemoryProposalUpdateRequest struct {
 
 type runtimeMemoryCatalogActionRequest struct {
 	Actor string `json:"actor"`
+}
+
+type runtimeMemoryBackupRestoreRequest struct {
+	Mode   string          `json:"mode"`
+	Backup json.RawMessage `json:"backup"`
 }
 
 func registerRuntimeHTTPHandlers(agentLoop *agent.AgentLoop, channelManager httpHandlerRegistrar, authToken string) {
@@ -110,6 +117,60 @@ func registerRuntimeHTTPHandlers(agentLoop *agent.AgentLoop, channelManager http
 		w.Header().Set("Content-Type", contentType)
 		w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
 		_, _ = w.Write(content)
+	})
+
+	channelManager.RegisterHTTPHandlerFunc(gatewayRuntimeMemoryBackupExportPath, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writeGatewayRuntimeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		if !authorizedGatewayRuntimeRequest(r, authToken) {
+			writeGatewayRuntimeError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+
+		content, contentType, filename, err := agentLoop.ExportRuntimeMemoryBackup(r.URL.Query().Get("format"))
+		if err != nil {
+			if errors.Is(err, agent.ErrRuntimeMemoryBackupInvalid) {
+				writeGatewayRuntimeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			writeGatewayRuntimeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+
+		w.Header().Set("Content-Type", contentType)
+		w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
+		_, _ = w.Write(content)
+	})
+
+	channelManager.RegisterHTTPHandlerFunc(gatewayRuntimeMemoryBackupRestorePath, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeGatewayRuntimeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		if !authorizedGatewayRuntimeRequest(r, authToken) {
+			writeGatewayRuntimeError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+
+		var req runtimeMemoryBackupRestoreRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeGatewayRuntimeError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+		result, err := agentLoop.RestoreRuntimeMemoryBackup(req.Backup, req.Mode)
+		if err != nil {
+			if errors.Is(err, agent.ErrRuntimeMemoryBackupInvalid) || errors.Is(err, agent.ErrRuntimeMemoryBackupUnsupportedMode) {
+				writeGatewayRuntimeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			writeGatewayRuntimeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(result)
 	})
 
 	channelManager.RegisterHTTPHandlerFunc(gatewayRuntimeMemoryCatalogEntriesPrefix, func(w http.ResponseWriter, r *http.Request) {

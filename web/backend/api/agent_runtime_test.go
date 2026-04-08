@@ -168,6 +168,114 @@ func TestHandleExportAgentRuntimeMemoryCatalog_ProxySuccess(t *testing.T) {
 	}
 }
 
+func TestHandleExportAgentRuntimeMemoryBackup_ProxySuccess(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	cfg := config.DefaultConfig()
+	if err := config.SaveConfig(configPath, cfg); err != nil {
+		t.Fatalf("SaveConfig() error = %v", err)
+	}
+
+	originalRead := readGatewayPIDDataForRuntime
+	originalDo := gatewayRuntimeDo
+	t.Cleanup(func() {
+		readGatewayPIDDataForRuntime = originalRead
+		gatewayRuntimeDo = originalDo
+	})
+
+	readGatewayPIDDataForRuntime = func() *ppid.PidFileData {
+		return &ppid.PidFileData{PID: 123, Host: "127.0.0.1", Port: 18790, Token: "pid-secret"}
+	}
+	gatewayRuntimeDo = func(req *http.Request, timeout time.Duration) (*http.Response, error) {
+		if req.URL.String() != "http://127.0.0.1:18790/runtime/agent/memory-backup/export?format=json" {
+			t.Fatalf("URL = %q", req.URL.String())
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(`{"version":1}`)),
+			Header: http.Header{
+				"Content-Type":        []string{"application/json"},
+				"Content-Disposition": []string{`attachment; filename="memory-backup.json"`},
+			},
+		}, nil
+	}
+
+	h := NewHandler(configPath)
+	mux := http.NewServeMux()
+	h.registerAgentRuntimeRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/agent/runtime/memory-backup/export?format=json", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if got := rec.Header().Get("Content-Disposition"); got != `attachment; filename="memory-backup.json"` {
+		t.Fatalf("Content-Disposition = %q", got)
+	}
+	if got := strings.TrimSpace(rec.Body.String()); got != `{"version":1}` {
+		t.Fatalf("body = %q", got)
+	}
+}
+
+func TestHandleRestoreAgentRuntimeMemoryBackup_ProxySuccess(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	cfg := config.DefaultConfig()
+	if err := config.SaveConfig(configPath, cfg); err != nil {
+		t.Fatalf("SaveConfig() error = %v", err)
+	}
+
+	originalRead := readGatewayPIDDataForRuntime
+	originalDo := gatewayRuntimeDo
+	t.Cleanup(func() {
+		readGatewayPIDDataForRuntime = originalRead
+		gatewayRuntimeDo = originalDo
+	})
+
+	readGatewayPIDDataForRuntime = func() *ppid.PidFileData {
+		return &ppid.PidFileData{PID: 123, Host: "127.0.0.1", Port: 18790, Token: "pid-secret"}
+	}
+	gatewayRuntimeDo = func(req *http.Request, timeout time.Duration) (*http.Response, error) {
+		if timeout != gatewayRuntimeMemoryRestoreTimeout {
+			t.Fatalf("timeout = %v, want %v", timeout, gatewayRuntimeMemoryRestoreTimeout)
+		}
+		if req.Method != http.MethodPost {
+			t.Fatalf("Method = %s, want POST", req.Method)
+		}
+		if req.URL.String() != "http://127.0.0.1:18790/runtime/agent/memory-backup/restore" {
+			t.Fatalf("URL = %q", req.URL.String())
+		}
+		body, _ := io.ReadAll(req.Body)
+		if !strings.Contains(string(body), `"mode":"validate"`) || !strings.Contains(string(body), `"version":1`) {
+			t.Fatalf("request body = %s", string(body))
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body: io.NopCloser(strings.NewReader(`{
+				"mode":"validate",
+				"validated_only":true,
+				"workspace_count":1
+			}`)),
+			Header: make(http.Header),
+		}, nil
+	}
+
+	h := NewHandler(configPath)
+	mux := http.NewServeMux()
+	h.registerAgentRuntimeRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/agent/runtime/memory-backup/restore", strings.NewReader(`{"mode":"validate","backup":{"version":1,"workspaces":[]}}`))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"validated_only":true`) {
+		t.Fatalf("response missing validated flag: %s", rec.Body.String())
+	}
+}
+
 func TestHandlePinAgentRuntimeMemoryCatalogEntry_ProxySuccess(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "config.json")
 	cfg := config.DefaultConfig()
