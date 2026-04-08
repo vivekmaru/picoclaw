@@ -180,3 +180,25 @@ func TestAgentLoop_GetRuntimeMemoryHistoryDoesNotCreateCurrentWorkingDirectoryMe
 		t.Fatalf("expected no memory directory in cwd, stat err = %v", err)
 	}
 }
+
+func TestRuntimeMemoryHistoryEventFromProposalIDsIncludeOwnerContext(t *testing.T) {
+	timestamp := int64(1710000000000)
+	first := runtimeMemoryHistoryEventFromProposal(RuntimeMemoryProposalInfo{
+		OwnerAgentID: "main",
+		MemoryProposal: MemoryProposal{
+			ID:    "memory-1",
+			Scope: "shared",
+		},
+	}, "proposal_created", "launcher", timestamp)
+	second := runtimeMemoryHistoryEventFromProposal(RuntimeMemoryProposalInfo{
+		OwnerAgentID: "reviewer",
+		MemoryProposal: MemoryProposal{
+			ID:    "memory-1",
+			Scope: "shared",
+		},
+	}, "proposal_created", "launcher", timestamp)
+
+	if first.ID == second.ID {
+		t.Fatalf("expected unique event ids, got %q", first.ID)
+	}
+}

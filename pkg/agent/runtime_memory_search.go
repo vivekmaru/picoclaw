@@ -167,22 +167,27 @@ func (al *AgentLoop) GetRuntimeMemoryHistory(query RuntimeMemoryHistoryQuery) Ru
 		}
 	}
 
-	for _, proposal := range al.GetRuntimeSnapshot().MemoryProposals {
-		if proposal.Created > 0 {
-			events = append(events, runtimeMemoryHistoryEventFromProposal(proposal, "proposal_created", runtimeMemoryProposalActor(proposal), proposal.Created))
-		}
-		if proposal.UpdatedAt > 0 {
-			events = append(events, runtimeMemoryHistoryEventFromProposal(proposal, "proposal_updated", proposal.UpdatedBy, proposal.UpdatedAt))
-		}
-		if proposal.ReviewedAt > 0 {
-			kind := "proposal_reviewed"
-			switch strings.ToLower(strings.TrimSpace(proposal.Status)) {
-			case "approved":
-				kind = "proposal_approved"
-			case "rejected":
-				kind = "proposal_rejected"
+	registry := al.GetRegistry()
+	if registry != nil {
+		agentIDs := registry.ListAgentIDs()
+		slices.Sort(agentIDs)
+		for _, proposal := range collectRuntimeMemoryProposals(registry, agentIDs) {
+			if proposal.Created > 0 {
+				events = append(events, runtimeMemoryHistoryEventFromProposal(proposal, "proposal_created", runtimeMemoryProposalActor(proposal), proposal.Created))
 			}
-			events = append(events, runtimeMemoryHistoryEventFromProposal(proposal, kind, proposal.ReviewedBy, proposal.ReviewedAt))
+			if proposal.UpdatedAt > 0 {
+				events = append(events, runtimeMemoryHistoryEventFromProposal(proposal, "proposal_updated", proposal.UpdatedBy, proposal.UpdatedAt))
+			}
+			if proposal.ReviewedAt > 0 {
+				kind := "proposal_reviewed"
+				switch strings.ToLower(strings.TrimSpace(proposal.Status)) {
+				case "approved":
+					kind = "proposal_approved"
+				case "rejected":
+					kind = "proposal_rejected"
+				}
+				events = append(events, runtimeMemoryHistoryEventFromProposal(proposal, kind, proposal.ReviewedBy, proposal.ReviewedAt))
+			}
 		}
 	}
 
@@ -300,7 +305,7 @@ func runtimeMemoryHistoryEventFromProposal(
 	timestamp int64,
 ) RuntimeMemoryHistoryEvent {
 	return RuntimeMemoryHistoryEvent{
-		ID:               fmt.Sprintf("%s:%s:%d", kind, proposal.ID, timestamp),
+		ID:               fmt.Sprintf("%s:%s:%s:%d", kind, proposal.OwnerAgentID, proposal.ID, timestamp),
 		Kind:             kind,
 		OwnerAgentID:     proposal.OwnerAgentID,
 		Scope:            proposal.Scope,
