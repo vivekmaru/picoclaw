@@ -33,6 +33,7 @@ var (
 func (h *Handler) registerAgentRuntimeRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/agent/runtime", h.handleAgentRuntime)
 	mux.HandleFunc("GET /api/agent/runtime/memory-catalog", h.handleAgentRuntimeMemoryCatalog)
+	mux.HandleFunc("GET /api/agent/runtime/memory-history", h.handleAgentRuntimeMemoryHistory)
 	mux.HandleFunc("GET /api/agent/runtime/memory-catalog/export", h.handleExportAgentRuntimeMemoryCatalog)
 	mux.HandleFunc("GET /api/agent/runtime/memory-backup/export", h.handleExportAgentRuntimeMemoryBackup)
 	mux.HandleFunc("POST /api/agent/runtime/memory-backup/restore", h.handleRestoreAgentRuntimeMemoryBackup)
@@ -65,7 +66,7 @@ func (h *Handler) handleAgentRuntime(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleAgentRuntimeMemoryCatalog(w http.ResponseWriter, r *http.Request) {
-	catalog, statusCode, err := h.getGatewayRuntimeMemoryCatalog(gatewayRuntimeRequestTimeout)
+	catalog, statusCode, err := h.getGatewayRuntimeMemoryCatalog(r.URL.Query(), gatewayRuntimeRequestTimeout)
 	if err != nil {
 		http.Error(w, err.Error(), statusCode)
 		return
@@ -73,6 +74,19 @@ func (h *Handler) handleAgentRuntimeMemoryCatalog(w http.ResponseWriter, r *http
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(catalog); err != nil {
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+	}
+}
+
+func (h *Handler) handleAgentRuntimeMemoryHistory(w http.ResponseWriter, r *http.Request) {
+	history, statusCode, err := h.getGatewayRuntimeMemoryHistory(r.URL.Query(), gatewayRuntimeRequestTimeout)
+	if err != nil {
+		http.Error(w, err.Error(), statusCode)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(history); err != nil {
 		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
 	}
 }
@@ -386,8 +400,12 @@ func (h *Handler) getGatewayRuntimeSnapshot(timeout time.Duration) (*agent.Runti
 	return &snapshot, http.StatusOK, nil
 }
 
-func (h *Handler) getGatewayRuntimeMemoryCatalog(timeout time.Duration) (*agent.RuntimeMemoryCatalog, int, error) {
-	resp, statusCode, err := h.doGatewayRuntimeRequest(http.MethodGet, "/runtime/agent/memory-catalog", nil, timeout)
+func (h *Handler) getGatewayRuntimeMemoryCatalog(query url.Values, timeout time.Duration) (*agent.RuntimeMemoryCatalog, int, error) {
+	path := "/runtime/agent/memory-catalog"
+	if encoded := runtimeQueryString(query); encoded != "" {
+		path += "?" + encoded
+	}
+	resp, statusCode, err := h.doGatewayRuntimeRequest(http.MethodGet, path, nil, timeout)
 	if err != nil {
 		return nil, statusCode, err
 	}
@@ -398,6 +416,24 @@ func (h *Handler) getGatewayRuntimeMemoryCatalog(timeout time.Duration) (*agent.
 		return nil, http.StatusBadGateway, err
 	}
 	return &catalog, http.StatusOK, nil
+}
+
+func (h *Handler) getGatewayRuntimeMemoryHistory(query url.Values, timeout time.Duration) (*agent.RuntimeMemoryHistory, int, error) {
+	path := "/runtime/agent/memory-history"
+	if encoded := runtimeQueryString(query); encoded != "" {
+		path += "?" + encoded
+	}
+	resp, statusCode, err := h.doGatewayRuntimeRequest(http.MethodGet, path, nil, timeout)
+	if err != nil {
+		return nil, statusCode, err
+	}
+	defer resp.Body.Close()
+
+	var history agent.RuntimeMemoryHistory
+	if err := json.NewDecoder(resp.Body).Decode(&history); err != nil {
+		return nil, http.StatusBadGateway, err
+	}
+	return &history, http.StatusOK, nil
 }
 
 func (h *Handler) updateGatewayRuntimeMemoryCatalogEntry(entryID, action, actor string, timeout time.Duration) (*agent.RuntimeMemoryEntryInfo, int, error) {
@@ -784,6 +820,25 @@ func (h *Handler) doGatewayRuntimeRequest(
 		return nil, resp.StatusCode, fmt.Errorf("%s", msg)
 	}
 	return resp, http.StatusOK, nil
+}
+
+func runtimeQueryString(values url.Values) string {
+	if len(values) == 0 {
+		return ""
+	}
+	filtered := url.Values{}
+	for key, rawValues := range values {
+		if strings.TrimSpace(key) == "" {
+			continue
+		}
+		for _, value := range rawValues {
+			if strings.TrimSpace(value) == "" {
+				continue
+			}
+			filtered.Add(key, value)
+		}
+	}
+	return filtered.Encode()
 }
 
 func parseDownloadFilename(contentDisposition string) string {

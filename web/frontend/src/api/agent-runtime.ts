@@ -117,6 +117,35 @@ export interface AgentRuntimeMemoryCatalog {
   entries?: AgentRuntimeMemoryCatalogEntry[]
 }
 
+export interface AgentRuntimeMemoryHistoryEvent {
+  id: string
+  kind: string
+  owner_agent_id: string
+  workspace?: string
+  scope?: string
+  scope_display_name?: string
+  subject_id: string
+  subject_type: string
+  title?: string
+  content?: string
+  domain?: string
+  entry_type?: string
+  status?: string
+  actor?: string
+  timestamp: number
+}
+
+export interface AgentRuntimeMemoryHistory {
+  generated_at: number
+  summary: {
+    event_count: number
+    catalog_event_count: number
+    proposal_event_count: number
+    kind_counts?: Record<string, number>
+  }
+  events?: AgentRuntimeMemoryHistoryEvent[]
+}
+
 export interface AgentRuntimeSnapshot {
   generated_at: number
   summary: {
@@ -157,13 +186,83 @@ export async function getAgentRuntime(): Promise<AgentRuntimeSnapshot> {
   return res.json() as Promise<AgentRuntimeSnapshot>
 }
 
-export async function getAgentRuntimeMemoryCatalog(): Promise<AgentRuntimeMemoryCatalog> {
-  const res = await launcherFetch("/api/agent/runtime/memory-catalog")
+type RuntimeMemoryCatalogQuery = {
+  search?: string
+  scope?: string
+  domain?: string
+  entryType?: string
+  archive?: string
+  ownerAgentID?: string
+  limit?: number
+}
+
+type RuntimeMemoryHistoryQuery = {
+  search?: string
+  kind?: string
+  scope?: string
+  actor?: string
+  ownerAgentID?: string
+  limit?: number
+}
+
+function toRuntimeQueryString(query?: Record<string, string | number | undefined>): string {
+  if (!query) {
+    return ""
+  }
+  const params = new URLSearchParams()
+  for (const [key, value] of Object.entries(query)) {
+    if (value === undefined || value === null) {
+      continue
+    }
+    const normalized = String(value).trim()
+    if (!normalized) {
+      continue
+    }
+    params.set(key, normalized)
+  }
+  const encoded = params.toString()
+  return encoded ? `?${encoded}` : ""
+}
+
+export async function getAgentRuntimeMemoryCatalog(
+  query?: RuntimeMemoryCatalogQuery,
+): Promise<AgentRuntimeMemoryCatalog> {
+  const res = await launcherFetch(
+    `/api/agent/runtime/memory-catalog${toRuntimeQueryString({
+      search: query?.search,
+      scope: query?.scope,
+      domain: query?.domain,
+      entry_type: query?.entryType,
+      archive: query?.archive,
+      owner_agent_id: query?.ownerAgentID,
+      limit: query?.limit,
+    })}`,
+  )
   if (!res.ok) {
     const message = (await res.text()) || `API error: ${res.status}`
     throw new Error(message)
   }
   return res.json() as Promise<AgentRuntimeMemoryCatalog>
+}
+
+export async function getAgentRuntimeMemoryHistory(
+  query?: RuntimeMemoryHistoryQuery,
+): Promise<AgentRuntimeMemoryHistory> {
+  const res = await launcherFetch(
+    `/api/agent/runtime/memory-history${toRuntimeQueryString({
+      search: query?.search,
+      kind: query?.kind,
+      scope: query?.scope,
+      actor: query?.actor,
+      owner_agent_id: query?.ownerAgentID,
+      limit: query?.limit,
+    })}`,
+  )
+  if (!res.ok) {
+    const message = (await res.text()) || `API error: ${res.status}`
+    throw new Error(message)
+  }
+  return res.json() as Promise<AgentRuntimeMemoryHistory>
 }
 
 export async function downloadAgentRuntimeMemoryCatalog(format: "markdown" | "json"): Promise<{

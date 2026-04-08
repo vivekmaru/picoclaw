@@ -64,6 +64,9 @@ Use `picoclaw gateway` when you want:
 - use the same launcher page to browse approved memory across shared and
   teammate scopes, then pin important entries, archive stale ones, or export
   the catalog when you want a backup or an audit snapshot
+- use the catalog filters and memory history panel together when you need to
+  answer "what do we already know?" and "what changed recently?" without
+  digging through raw `MEMORY.md` files by hand
 - use the runtime memory backup endpoints when you want a restorable snapshot
   of workspace memory state, not just a human-readable catalog export
 - add skills or MCP servers after the base flow works

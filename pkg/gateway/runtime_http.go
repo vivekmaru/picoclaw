@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/sipeed/picoclaw/pkg/agent"
@@ -13,6 +14,7 @@ import (
 
 const gatewayRuntimePath = "/runtime/agent"
 const gatewayRuntimeMemoryCatalogPath = "/runtime/agent/memory-catalog"
+const gatewayRuntimeMemoryHistoryPath = "/runtime/agent/memory-history"
 const gatewayRuntimeMemoryCatalogExportPath = "/runtime/agent/memory-catalog/export"
 const gatewayRuntimeMemoryBackupExportPath = "/runtime/agent/memory-backup/export"
 const gatewayRuntimeMemoryBackupRestorePath = "/runtime/agent/memory-backup/restore"
@@ -91,7 +93,36 @@ func registerRuntimeHTTPHandlers(agentLoop *agent.AgentLoop, channelManager http
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(agentLoop.GetRuntimeMemoryCatalog())
+		_ = json.NewEncoder(w).Encode(agentLoop.SearchRuntimeMemoryCatalog(agent.RuntimeMemoryCatalogQuery{
+			Search:       r.URL.Query().Get("search"),
+			Scope:        r.URL.Query().Get("scope"),
+			Domain:       r.URL.Query().Get("domain"),
+			EntryType:    r.URL.Query().Get("entry_type"),
+			Archive:      r.URL.Query().Get("archive"),
+			OwnerAgentID: r.URL.Query().Get("owner_agent_id"),
+			Limit:        gatewayRuntimeQueryLimit(r.URL.Query().Get("limit")),
+		}))
+	})
+
+	channelManager.RegisterHTTPHandlerFunc(gatewayRuntimeMemoryHistoryPath, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writeGatewayRuntimeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		if !authorizedGatewayRuntimeRequest(r, authToken) {
+			writeGatewayRuntimeError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(agentLoop.GetRuntimeMemoryHistory(agent.RuntimeMemoryHistoryQuery{
+			Search:       r.URL.Query().Get("search"),
+			Kind:         r.URL.Query().Get("kind"),
+			Scope:        r.URL.Query().Get("scope"),
+			Actor:        r.URL.Query().Get("actor"),
+			OwnerAgentID: r.URL.Query().Get("owner_agent_id"),
+			Limit:        gatewayRuntimeQueryLimit(r.URL.Query().Get("limit")),
+		}))
 	})
 
 	channelManager.RegisterHTTPHandlerFunc(gatewayRuntimeMemoryCatalogExportPath, func(w http.ResponseWriter, r *http.Request) {
@@ -389,6 +420,18 @@ func authorizedGatewayRuntimeRequest(r *http.Request, authToken string) bool {
 	}
 	given := extractGatewayBearerToken(r.Header.Get("Authorization"))
 	return given != "" && subtle.ConstantTimeCompare([]byte(given), []byte(authToken)) == 1
+}
+
+func gatewayRuntimeQueryLimit(value string) int {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0
+	}
+	limit, err := strconv.Atoi(value)
+	if err != nil || limit < 0 {
+		return 0
+	}
+	return limit
 }
 
 func extractGatewayBearerToken(header string) string {

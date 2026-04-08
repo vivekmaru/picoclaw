@@ -433,6 +433,10 @@
         "memory_catalog_archive_error": "Failed to archive the selected memory entry.",
         "memory_catalog_restore_success": "Restored memory entry {{title}}.",
         "memory_catalog_restore_error": "Failed to restore the selected memory entry.",
+        "memory_history_title": "Memory History",
+        "memory_history_description": "Track how long-term memory changed over time across approved entries and proposal review events.",
+        "memory_history_empty": "No memory history events match the current filters.",
+        "memory_history_load_error": "Failed to load recent memory history.",
         "memory_proposal_create_success": "Created memory proposal {{id}}.",
         "memory_proposal_create_error": "Failed to create a memory proposal from the selected task.",
         "memory_proposal_approve_success": "Approved memory proposal {{id}}.",
@@ -511,12 +515,21 @@
           "archived_only": "Archived only",
           "archived_all": "All lifecycle states"
         },
+        "memory_history_filters": {
+          "search_placeholder": "Filter by event, title, content, scope, actor, domain, or type",
+          "kind_all": "All events"
+        },
         "memory_catalog_stats": {
           "entries": "Approved Entries",
           "scopes": "Catalog Scopes",
           "workspaces": "Workspaces",
           "pinned": "Pinned",
           "archived": "Archived"
+        },
+        "memory_history_stats": {
+          "events": "Events",
+          "catalog": "Catalog Events",
+          "proposals": "Proposal Events"
         },
         "review_fields": {
           "actor": "Reviewer",
