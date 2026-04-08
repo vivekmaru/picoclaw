@@ -211,9 +211,6 @@ func (al *AgentLoop) GetRuntimeMemoryHistory(query RuntimeMemoryHistoryQuery) Ru
 		}
 		return strings.Compare(a.ID, b.ID)
 	})
-	if query.Limit > 0 && len(filtered) > query.Limit {
-		filtered = filtered[:query.Limit]
-	}
 
 	for _, event := range filtered {
 		history.Summary.KindCounts[event.Kind]++
@@ -227,6 +224,10 @@ func (al *AgentLoop) GetRuntimeMemoryHistory(query RuntimeMemoryHistoryQuery) Ru
 	history.Summary.EventCount = len(filtered)
 	if len(history.Summary.KindCounts) == 0 {
 		history.Summary.KindCounts = nil
+	}
+	if query.Limit > 0 && len(filtered) > query.Limit {
+		history.Events = filtered[:query.Limit]
+		return history
 	}
 	history.Events = filtered
 	return history

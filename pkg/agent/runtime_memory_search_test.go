@@ -129,8 +129,8 @@ func TestAgentLoop_GetRuntimeMemoryHistory(t *testing.T) {
 	if len(history.Events) == 0 {
 		t.Fatal("expected history events, got none")
 	}
-	if history.Summary.EventCount != len(history.Events) {
-		t.Fatalf("summary.event_count = %d, want %d", history.Summary.EventCount, len(history.Events))
+	if history.Summary.EventCount < len(history.Events) {
+		t.Fatalf("summary.event_count = %d, want >= %d", history.Summary.EventCount, len(history.Events))
 	}
 	foundProposalUpdate := false
 	foundApproved := false
@@ -153,6 +153,61 @@ func TestAgentLoop_GetRuntimeMemoryHistory(t *testing.T) {
 	}
 	if !foundApproved {
 		t.Fatalf("expected proposal_approved event in %+v", history.Events)
+	}
+}
+
+func TestAgentLoop_GetRuntimeMemoryHistorySummaryCountsBeforeLimit(t *testing.T) {
+	loop, cfg, _, _, cleanup := newTestAgentLoop(t)
+	t.Cleanup(cleanup)
+	t.Cleanup(func() { loop.GetRegistry().Close() })
+
+	store := NewMemoryProposalStore(cfg.Agents.Defaults.Workspace)
+	proposals := []MemoryProposalRequest{
+		{
+			Scope:         "shared",
+			Domain:        "server",
+			Target:        "long_term",
+			Kind:          "task_result",
+			EntryType:     "runbook",
+			Title:         "One",
+			Content:       "First",
+			SourceTaskID:  "subagent-1",
+			SourceAgentID: "main",
+		},
+		{
+			Scope:         "shared",
+			Domain:        "server",
+			Target:        "long_term",
+			Kind:          "task_result",
+			EntryType:     "runbook",
+			Title:         "Two",
+			Content:       "Second",
+			SourceTaskID:  "subagent-2",
+			SourceAgentID: "main",
+		},
+	}
+	for _, req := range proposals {
+		proposal, err := store.Create(req)
+		if err != nil {
+			t.Fatalf("Create() error = %v", err)
+		}
+		if _, err := store.Approve(proposal.ID, "operator", "approved"); err != nil {
+			t.Fatalf("Approve() error = %v", err)
+		}
+	}
+
+	history := loop.GetRuntimeMemoryHistory(RuntimeMemoryHistoryQuery{Limit: 1})
+	if got := len(history.Events); got != 1 {
+		t.Fatalf("len(history.Events) = %d, want 1", got)
+	}
+	if history.Summary.EventCount <= len(history.Events) {
+		t.Fatalf("summary.event_count = %d, want > %d", history.Summary.EventCount, len(history.Events))
+	}
+	if got := history.Summary.KindCounts["proposal_created"]; got < 2 {
+		t.Fatalf("summary.kind_counts[proposal_created] = %d, want >= 2", got)
+	}
+	if got := history.Summary.KindCounts["proposal_approved"]; got < 2 {
+		t.Fatalf("summary.kind_counts[proposal_approved] = %d, want >= 2", got)
 	}
 }
 
