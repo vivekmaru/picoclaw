@@ -125,7 +125,6 @@ export function TeammatesPage() {
   const memoryCatalogBaseQuery = useQuery({
     queryKey: ["agent-runtime", "memory-catalog"],
     queryFn: () => getAgentRuntimeMemoryCatalog(),
-    refetchInterval: RUNTIME_POLL_MS,
   })
 
   const memoryCatalogQuery = useQuery({
